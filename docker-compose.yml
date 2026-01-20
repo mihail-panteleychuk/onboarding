@@ -1,0 +1,82 @@
+networks:
+  inhome:
+    name: inhome
+    external: true
+    driver: bridge
+
+x-common:
+    &common
+    build:
+      args:
+        INSTALL_DEV_LIBS: "true"
+      context: .
+      dockerfile: docker/python/Dockerfile
+    env_file:
+      - web_app/.env
+    networks:
+      - inhome
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - ./web_app:/srv/www/web_app
+      - ./docker/python/tmp:/tmp/
+      - poetry_cache:/var/cache/pypoetry
+
+
+services:
+  db:
+    restart: unless-stopped
+    image: postgres:latest
+    # user: 1000:1000  # FIXME
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    env_file:
+      - web_app/.env
+    networks:
+      - inhome
+
+  redis:
+    image: "redis:alpine"
+    command: redis-server
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - inhome
+
+  django:
+    << : *common
+    ports:
+      - "8000:8000"
+    command: "gunicorn -t 1800 --workers 4 --threads 12 --keep-alive 5 -k 'gevent' -b 0.0.0.0:8000 config.wsgi --reload"
+#    command: >
+#      uvicorn config.asgi:application
+#      --host 0.0.0.0
+#      --port 8000
+#      --reload
+#      --timeout-keep-alive 1800
+#      --proxy-headers
+#      --lifespan off
+
+  celery_worker:
+    << : *common
+    command: "celery -A config.celery worker -c 4 -l INFO -E"
+
+  celery_beat:
+    << : *common
+    command: "celery -A config.celery beat -l INFO"
+
+  celery_flower:
+    << : *common
+    command: "celery -A config.celery flower -l INFO"
+    ports:
+      - "5555:5555"
+
+volumes:
+  postgres_data:
+  redis_data:
+  poetry_cache:

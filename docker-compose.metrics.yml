@@ -1,0 +1,76 @@
+# compose file to run prometheus and grafana containers using a single network and volume
+# to allow them to communicate and share data
+
+services:
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./docker/grafana/provisioning/:/etc/grafana/provisioning/
+    networks:
+      - inhome
+
+  prometheus:
+    image: prom/prometheus
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - "./docker/prometheus/prometheus.local.yml:/etc/prometheus/prometheus.yml"
+    networks:
+      - inhome
+
+  redis-exporter:
+    image: oliver006/redis_exporter
+    container_name: redis-exporter
+    restart: unless-stopped
+    ports:
+      - "9121:9121"
+    environment:
+      REDIS_ADDR: "redis:6379"
+      REDIS_EXPORTER_COUNT_KEYS: "default"
+      REDIS_EXPORTER_COUNT_SCAN_KEYS: "true"  # Enable scanning for Celery queues
+#    depends_on:
+#      - redis
+    networks:
+      - inhome
+
+  celery-exporter:
+    image: ovalmoney/celery-exporter
+    container_name: celery-exporter
+    restart: unless-stopped
+    ports:
+      - "8888:8888"
+    environment:
+      CELERY_BROKER_URL: "redis://redis:6379/0"
+      CELERY_EXPORTER_PORT: "8888"
+      CELERY_EXPORTER_INTERVAL: "10"
+    networks:
+      - inhome
+
+#  pushgateway:
+#    image: prom/pushgateway
+#    container_name: pushgateway
+#    ports:
+#      - "9091:9091"
+#    networks:
+#      - inhome
+
+networks:
+  inhome:
+    name: inhome
+    external: true
+    driver: bridge
+
+
+volumes:
+  prometheus_data:
+    driver: local
+    driver_opts:
+      o: bind
+      type: none
+      device: ./docker/prometheus/data
+  grafana_data:
