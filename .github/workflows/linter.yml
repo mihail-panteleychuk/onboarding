@@ -1,0 +1,31 @@
+name: Lint Python Code
+
+on:
+  pull_request:
+    branches:
+      - Develop
+
+jobs:
+  lint:
+    name: Lint Python Code
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Install Poetry
+        run: pip install poetry
+
+      - name: Install dependencies with Poetry
+        working-directory: web_app
+        run: poetry install
+
+      - name: Run flake8
+        working-directory: web_app
+        run: poetry run flake8 . --exclude=.venv

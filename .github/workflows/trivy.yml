@@ -1,0 +1,51 @@
+name: Trivy Repository Scan
+
+on:
+  pull_request:
+    branches:
+      - Develop
+
+jobs:
+  scan-vulnerabilities:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Trivy Vulnerability Scan
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+          trivy fs . --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed --scanners vuln --format table
+
+  scan-secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Trivy Secret Scan
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+          trivy fs . --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed --scanners secret --format table
+
+  scan-misconfigurations:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Trivy Misconfiguration Scan
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+          trivy fs . --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed --scanners misconfig --format table
+
+  scan-licenses:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Trivy License Scan
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+          trivy fs . --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed --scanners license --format table
