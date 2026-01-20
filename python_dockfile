@@ -1,0 +1,15 @@
+FROM python:3.9
+
+# set environment variables
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONUNBUFFERED 1
+
+COPY ./site_name /srv/www/site_name
+WORKDIR /srv/www/site_name
+
+RUN apt-get update && apt-get install -y \
+gettext
+
+
+RUN pip install -r requirements.txt
+

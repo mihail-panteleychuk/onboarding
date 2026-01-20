@@ -1,0 +1,49 @@
+version: '3.7'
+
+# temp
+
+services:
+  nginx:
+    container_name: nginx
+    #image: nginx:latest
+    build: ./docker/nginx
+    depends_on:
+      - django
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./site_name/static:/srv/www/site_name/static
+      - ./site_name/media:/srv/www/site_name/media
+      - ./docker/nginx:/etc/nginx/conf.d
+    command: "/bin/sh -c 'while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g \"daemon off;\"'"
+
+
+  django:
+    container_name: django
+    build:
+      context: .
+      dockerfile: python_dockfile
+    volumes:
+      - ./site_name:/srv/www/site_name
+    # gunicorn run paramaters
+    command: "gunicorn -t 70 --workers 4 --threads 12 --keep-alive 5 -k 'gevent' -b 0.0.0.0:80 config.wsgi"
+
+
+  db:
+    container_name: db
+    restart: unless-stopped
+    image: postgres
+    # user: 1000:1000
+    ports:
+      - "5456:5432"
+    volumes:
+      - postgres_data_new:/var/lib/postgresql/data
+    environment:
+      POSTGRES_PASSWORD: "qwety12351994qwerty"
+      POSTGRES_USER: "postgres"
+      POSTGRES_DB: "site_name"
+
+
+volumes:
+  postgres_data_new:
