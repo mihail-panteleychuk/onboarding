@@ -1,0 +1,41 @@
+name: Deploy via SSH
+
+on:
+  push:
+    branches:
+      - Develop
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name }}
+    steps:
+    - name: executing remote ssh commands using password
+      uses: appleboy/ssh-action@master
+      env:
+        BRANCH: ${{ github.ref_name }}
+        GIT_PROJECT: ${{ vars.GIT_PROJECT }}
+      with:
+        host: ${{ vars.HOST_IP }}
+        username: ${{ vars.HOST_USER }}
+        key: ${{ secrets.HOST_KEY }}
+        port: ${{ vars.HOST_PORT }}
+        envs: |
+          BRANCH, GIT_PROJECT
+        script: |
+          cd $GIT_PROJECT
+          git pull origin "$BRANCH"
+          git fetch --all
+          git reset --hard "origin/$BRANCH"
+          git pull origin "$BRANCH"
+          sudo echo '${{ secrets.ENV_FILE_CONTENT }}' > web_app/.env
+          sudo docker compose -f docker-compose.remote.yml  up --build --no-recreate -d db redis nginx celery_beat
+          sudo docker compose -f docker-compose.remote.yml  up --build -d django celery_worker
+          sudo docker compose -f docker-compose.remote.yml exec django ./manage.py migrate --noinput
+          sudo docker compose -f docker-compose.remote.yml exec django ./manage.py collectstatic --noinput
+          sudo docker compose -f docker-compose.remote.yml exec django ./manage.py makemessages
+          sudo docker compose -f docker-compose.remote.yml exec django ./manage.py compilemessages
+          sudo docker compose -f docker-compose.remote.yml restart django nginx celery_worker celery_beat
+          sudo docker system prune --filter "label!=repository=$GIT_PROJECT" -f

@@ -1,0 +1,86 @@
+name: Trivy Repository Scan
+
+on:
+  pull_request:
+    branches:
+      - Develop
+
+jobs:
+  scan-vulnerabilities:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Trivy Vulnerability Scan
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+          trivy fs . --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed --scanners vuln --format table 
+
+  scan-secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Trivy Secret Scan
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+          trivy fs . --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed --scanners secret --format table 
+
+  scan-misconfigurations:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Trivy Misconfiguration Scan
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+          trivy fs . --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed --scanners misconfig --format table 
+
+  scan-licenses:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Trivy License Scan
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+          trivy fs . --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed --scanners license --format table
+          
+  scan-image:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Build Docker image
+        id: build
+        run: |
+          BRANCH=$(echo "${{ github.ref_name }}" | tr '/' '-')
+          HASH=${{ github.sha }}
+          IMAGE_NAME="app-$BRANCH-$HASH"
+          DOCKER_BUILDKIT=1 docker build -f docker/python/Dockerfile -t $IMAGE_NAME .
+          echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
+
+      - name: Docker image debug
+        run: |
+          docker image ls -a
+
+      - name: Run Trivy scan
+        id: trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+          trivy image "${{ env.IMAGE_NAME }}" \
+            --exit-code 1 \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --format table \
+            --scanners vuln,secret,misconfig
+      # - name: Upload Trivy scan results to GitHub Security tab
+      #   uses: github/codeql-action/upload-sarif@v3
+      #   with:
+      #     sarif_file: 'trivy-results.sarif'
+      # costs?test
