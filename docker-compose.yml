@@ -1,0 +1,57 @@
+version: '3'
+
+services:
+  nginx:
+    container_name: nginx
+    image: nginx:1.15-alpine
+    depends_on:
+      - django
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./site_name/static:/srv/www/site_name/static
+      - ./site_name/media:/srv/www/site_name/media
+      - ./data/nginx:/etc/nginx/conf.d
+      - ./site_name/frontend_build:/srv/www/site_name/frontend_build
+      - ./site_name/frontend_build_excel:/srv/www/site_name/frontend_build_excel
+      - ./data/certbot/conf:/etc/letsencrypt
+      - ./data/certbot/www:/var/www/certbot
+    command:
+      "/bin/sh -c 'while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g \"daemon off;\"'"
+
+  certbot:
+    container_name: certbot
+    image: certbot/certbot
+    volumes:
+      - ./data/certbot/conf:/etc/letsencrypt
+      - ./data/certbot/www:/var/www/certbot
+  django:
+    container_name: django
+    build:
+      context: .
+      dockerfile: python_dockfile
+    volumes:
+      - ./site_name:/srv/www/site_name
+    env_file:
+      - ./site_name/config/.env_dev
+    # gunicorn run paramaters
+    command: "gunicorn -t 70 --workers 4 --threads 12 --keep-alive 5 -k 'gevent' -b 0.0.0.0:80 config.wsgi"
+
+  db:
+    container_name: db
+    restart: unless-stopped
+    image: postgres
+    # user: 1000:1000
+    ports:
+      - "5456:5432"
+    volumes:
+      - postgres_data_new:/var/lib/postgresql/data
+    environment:
+      POSTGRES_PASSWORD: "qwety12351994qwerty"
+      POSTGRES_USER: "postgres"
+      POSTGRES_DB: "site_name"
+
+
+volumes:
+  postgres_data_new:

@@ -1,0 +1,31 @@
+name: CD for InHome-develop-instance
+
+on:
+  push:
+    branches:
+      - light_version
+jobs:
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+    - name: executing remote ssh commands using password
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.SSH_HOST }}
+        username: ${{ secrets.SSH_USER }}
+        key: ${{ secrets.SSH_KEY }}
+        port: ${{ secrets.SSH_PORT }}
+        script: |
+          cd in_home_project_back
+          export DOCKER_SCAN_SUGGEST=false
+          git pull origin light_version
+          docker compose  up --build --no-recreate -d db nginx
+          docker compose  up --build -d django
+          docker compose exec django python3 manage.py makemigrations --noinput
+          docker compose exec django python3 manage.py migrate --noinput
+          docker compose exec django python3 manage.py collectstatic --noinput
+          docker compose exec django python3 manage.py compilemessages
+          docker compose restart django nginx
+          docker system prune --filter "label!=repository=in_home_django_back"  -f
