@@ -1,0 +1,100 @@
+x-common:
+    &common
+    build:
+      context: .
+      dockerfile: docker/python/Dockerfile
+    env_file:
+      - web_app/.env
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - ./web_app:/srv/www/web_app
+      - ./docker/python/tmp:/tmp/
+      - poetry_cache:/var/cache/pypoetry
+
+
+services:
+  nginx:
+    container_name: nginx
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/nginx:/etc/nginx/conf.d
+      - ./docker/certbot/conf:/etc/letsencrypt
+      - ./docker/certbot/log:/var/log/letsencrypt
+      - ./docker/certbot/www:/var/www/certbot
+      - ./web_app/static:/srv/www/web_app/static
+      - ./web_app/media:/srv/www/web_app/media
+      # TODO: investigate if we still need this volumes
+      - ./web_app/frontend_build:/srv/www/web_app/frontend_build
+#      - ./web_app/frontend_build_excel:/srv/www/web_app/frontend_build_excel
+    command:
+      "/bin/sh -c 'while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g \"daemon off;\"'"
+
+  certbot:
+    container_name: certbot
+    image: certbot/certbot:latest
+    restart: always
+    depends_on:
+      - nginx
+    entrypoint: /bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'
+    volumes:
+      - ./docker/certbot/conf:/etc/letsencrypt
+      - ./docker/certbot/log:/var/log/letsencrypt
+      - ./docker/certbot/www:/var/www/certbot
+
+  db:
+    restart: unless-stopped
+    image: postgres:latest
+    # user: 1000:1000  # FIXME
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    env_file:
+      - web_app/.env
+
+  redis:
+    image: "redis:alpine"
+    command: redis-server
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  django:
+    << : *common
+    ports:
+      - "8000:8000"
+    command: "gunicorn -t 1800 --workers 4 --threads 12 --keep-alive 5 -k 'gevent' -b 0.0.0.0:8000 config.wsgi"
+#    command: >
+#      uvicorn config.asgi:application
+#      --host 0.0.0.0
+#      --port 8000
+#      --workers 2
+#      --timeout-keep-alive 1800
+#      --proxy-headers
+#      --lifespan off
+
+  celery_worker:
+    << : *common
+    # concurrency - the default is the number of CPUs available on your system
+    command: "celery -A config.celery worker -l INFO --concurrency 1"
+
+  celery_beat:
+    << : *common
+    command: "celery -A config.celery beat -l INFO"
+
+#  celery_flower:
+#    << : *common
+#    command: "celery -A config.celery flower -l INFO"
+#    ports:
+#      - "5555:5555"
+
+volumes:
+  postgres_data:
+  redis_data:
+  poetry_cache:
