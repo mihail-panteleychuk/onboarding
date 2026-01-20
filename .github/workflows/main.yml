@@ -1,0 +1,21 @@
+name: CD for Dropship-AWS
+
+on:
+  push:
+    branches:
+      - Production
+jobs:
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+    - name: executing remote ssh commands using password
+      uses: appleboy/ssh-action@master
+      with:
+        host: '23.23.42.137'
+        username: 'ubuntu'
+        key: ${{ secrets.ID_RSA1 }}
+        port: '22'
+        script: |
+          python3 dropship_backend_updater.py

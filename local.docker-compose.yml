@@ -1,0 +1,38 @@
+version: '3.7'
+
+# temp
+
+services:
+
+  django:
+    container_name: django
+    build:
+      context: .
+      dockerfile: python_dockfile
+    volumes:
+      - ./site_name:/srv/www/site_name
+    ports:
+      - 8001:80
+      - 8000:8000
+    env_file:
+      - ./site_name/config/.env_local
+    # gunicorn run paramaters
+    command: "gunicorn -t 70 --workers 2 --threads 4 --keep-alive 5 -k 'gevent' -b 0.0.0.0:80 config.wsgi --reload"
+
+
+  db:
+    container_name: db
+    restart: unless-stopped
+    image: postgres
+    # user: 1000:1000
+    ports:
+      - "5456:5432"
+    volumes:
+      - postgres_data_new:/var/lib/postgresql/data
+    environment:
+      POSTGRES_PASSWORD: "qwety12351994qwerty"
+      POSTGRES_USER: "postgres"
+      POSTGRES_DB: "site_name"
+
+volumes:
+  postgres_data_new:
