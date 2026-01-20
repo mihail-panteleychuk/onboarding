@@ -1,0 +1,15 @@
+# ignore all local django static files
+site_name/static/*
+site_name/media/*
+
+# ignore all local migrations
+site_name/*/migrations/0*
+site_name/frontend_build/*
+
+# ignore all logs
+*.log
+*.log*
+*.pyc
+
+# ignore certbot
+data/certbot/*

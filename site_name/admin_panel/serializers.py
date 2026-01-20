@@ -1,0 +1,44 @@
+from .models import *
+from rest_framework import serializers
+from django.contrib.auth import get_user_model
+from user.validators import validate_user_password, role_validator
+
+
+class BaseAdminPanelUserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = get_user_model()
+        fields = ('id', 'first_name', 'last_name', 'email', 'role', 'is_active', 'is_deleted', 'password')
+
+    def create(self, validated_data):
+        if 'get_role_object' in validated_data:
+            validated_data.update({'role': validated_data.pop('get_role_object')})
+
+        if validated_data.get('password'):
+            validated_data.update({'is_active': True, 'email_subscribed': True})
+        else:
+            validated_data.update({'is_active': False, 'email_subscribed': False})
+
+        return super(BaseAdminPanelUserSerializer, self).create(validated_data)
+
+    def update(self, instance, validated_data):
+        if 'get_role_object' in validated_data:
+            validated_data.update({'role': validated_data.pop('get_role_object')})
+        return super(BaseAdminPanelUserSerializer, self).update(instance, validated_data)
+
+
+class AdminPanelUserUpdateSerializer(BaseAdminPanelUserSerializer):
+    role = serializers.JSONField(source='get_role_object', required=False, validators=[role_validator])
+
+
+class AdminPanelUserCreateSerializer(BaseAdminPanelUserSerializer):
+    password = serializers.CharField(write_only=True, required=False, allow_null=True,
+                                     validators=[validate_user_password])
+    role = serializers.JSONField(source='get_role_object',
+                                 default=get_user_model().USER,
+                                 validators=[role_validator])
+
+    def is_valid(self, raise_exception=False):
+        if get_user_model().objects.filter(email__iexact=self.initial_data['email'].lower()).exists():
+            msg = f'User with {self.initial_data["email"]} already exists on the website. Please try another email address or contact the user.'
+            raise serializers.ValidationError({'detail': msg})
+        super(AdminPanelUserCreateSerializer, self).is_valid(raise_exception=raise_exception)
