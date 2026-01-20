@@ -1,0 +1,47 @@
+# IDE
+.idea/
+.vscode/
+
+# Python compiled files
+__pycache__/
+*/__pycache__/*
+*.py[cow]
+
+# ignore all local django static files
+web_app/static/*
+web_app/media/*
+
+web_app/frontend_build/*
+
+# ignore all logs
+*.log
+*.log*
+
+# ignore certbot
+docker/certbot/*
+docker/python/tmp/cache/*
+venv*
+
+.vscode
+.venv
+
+.env
+vault.env
+
+# Celery
+celerybeat-schedule
+*.pid
+
+# Ignore sensitive information
+*.sqlite3
+*.sql
+*.key
+*.pem
+*.p12
+*.cer
+*.crt
+*.csr
+*.jks
+/web_app/celerybeat-schedule
+!.gitkeep
+.github_token

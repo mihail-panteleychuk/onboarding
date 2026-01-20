@@ -1,0 +1,73 @@
+[tool.poetry]
+name = "in-home-project-back"
+version = "0.1.0"
+description = ""
+authors = ["vitalik_t"]
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+# Core dependencies
+python = "^3.12"
+cryptography = "*"
+
+# Django dependencies
+django = "*"
+django-cors-headers = "*"
+django-filter = "*"
+django-js-asset = "*"
+django-modeltranslation = "*"
+django-templated-mail = "*"
+djangorestframework = "*"
+django-unfold = "*"
+djangorestframework-simplejwt = "*"
+drf-yasg = "*"
+
+
+# Data processing libraries
+pandas = "*"
+gspread = "*"
+jsonschema = "*"
+
+# Database and ORM dependencies
+psycopg2-binary = "*"
+django-environ = "*"
+
+# Web server and deployment tools
+gunicorn = "*"
+gevent = "*"
+celery = "*"
+redis = "*"
+
+
+# File storage and cloud integration
+geoip2 = "*"
+polib = "*"
+django-storages = "*"
+stripe = "*"
+google-api-python-client = "*"
+
+# Logging and monitoring tools
+
+python-json-logger = "*"
+
+
+[tool.poetry.group.local.dependencies]
+isort = "*"
+flake8 = "*"
+pre-commit = "*"
+black = "*"
+
+
+[tool.poetry.group.test.dependencies]
+# Testing dependencies
+model-bakery = "*"  # https://pypi.org/project/model-bakery/
+
+# Coverage Plugins
+pytest-cov = "*"  # https://github.com/pytest-dev/pytest-cov
+django-coverage-plugin = "*"  # https://github.com/nedbat/django_coverage_plugin
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
