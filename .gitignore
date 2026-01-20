@@ -1,0 +1,6 @@
+# ignore all local django static files
+site_name/static/*
+site_name/media/*
+
+# ignore all local migrations
+site_name/*/migrations/*
