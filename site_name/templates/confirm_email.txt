@@ -1,0 +1,6 @@
+Verify your account
+
+Confirm your email below to get your Account started using link below:
+  {{ link }}
+
+Copyright © 2022  All Rights Reserved
