@@ -70,6 +70,7 @@ INSTALLED_APPS = [
     "apps.subscription",
     "apps.dashboard",
     "apps.payments",
+    "apps.billing",
 ]
 
 
@@ -297,11 +298,15 @@ MEDIA_URL = "/api/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
 # Emails config
-EMAIL_HOST = "smtp.gmail.com"
-EMAIL_USE_TLS = True
-EMAIL_PORT = 587
-EMAIL_HOST_USER = env.str("EMAIL_HOST_USER")
-EMAIL_HOST_PASSWORD = env.str("EMAIL_HOST_PASSWORD")
+if IS_LOCAL:
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+else:
+    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+    EMAIL_HOST = "smtp.gmail.com"
+    EMAIL_USE_TLS = True
+    EMAIL_PORT = 587
+    EMAIL_HOST_USER = env.str("EMAIL_HOST_USER")
+    EMAIL_HOST_PASSWORD = env.str("EMAIL_HOST_PASSWORD")
 
 
 # security settings
@@ -319,6 +324,7 @@ API_DOMAIN = env.str("API_DOMAIN")
 STRIPE_PUBLISHABLE_KEY = env.str("STRIPE_PUBLISHABLE_KEY")
 STRIPE_SECRET_KEY = env.str("STRIPE_SECRET_KEY")
 STRIPE_ACCOUNT_ID = env.str("STRIPE_ACCOUNT_ID")
+STRIPE_WEBHOOK_SECRET = env.str("STRIPE_WEBHOOK_SECRET", default="")
 
 # https://inhouseapp.dataforest.tech/onboarding/checkout/payment/result
 STRIPE_ORDER_SUCCESS_URL = f"https://{FRONT_DOMAIN}/onboarding/checkout/payment/"

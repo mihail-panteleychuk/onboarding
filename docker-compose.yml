@@ -27,7 +27,7 @@ x-common:
 services:
   db:
     restart: unless-stopped
-    image: postgres:latest
+    image: postgres:16
     # user: 1000:1000  # FIXME
     ports:
       - "5432:5432"
@@ -52,19 +52,15 @@ services:
     << : *common
     ports:
       - "8000:8000"
-    command: "gunicorn -t 1800 --workers 4 --threads 12 --keep-alive 5 -k 'gevent' -b 0.0.0.0:8000 config.wsgi --reload"
-#    command: >
-#      uvicorn config.asgi:application
-#      --host 0.0.0.0
-#      --port 8000
-#      --reload
-#      --timeout-keep-alive 1800
-#      --proxy-headers
-#      --lifespan off
+    command: >
+      gunicorn -t 1800 --workers 4 --threads 12 --keep-alive 5
+      -k gevent
+      --worker-tmp-dir /dev/shm
+      -b 0.0.0.0:8000 config.wsgi --reload
 
   celery_worker:
     << : *common
-    command: "celery -A config.celery worker -l INFO"
+    command: "celery -A config.celery worker -l INFO --pool=solo"
 
   celery_beat:
     << : *common

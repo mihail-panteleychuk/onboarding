@@ -94,6 +94,13 @@ class CustomTokenRefreshSerializer(serializers.Serializer):
         return data
 
 
+class SignUpSerializer(serializers.Serializer):
+    """Сериализатор для регистрации нового пользователя"""
+    email = serializers.EmailField(required=True)
+    first_name = serializers.CharField(required=True, max_length=150)
+    last_name = serializers.CharField(required=True, max_length=150)
+
+
 class ChangeEmailSerializer(serializers.ModelSerializer):
     default_error_messages = {
         "old_email_empty": _("Old user email not providen."),

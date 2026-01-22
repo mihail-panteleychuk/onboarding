@@ -28,6 +28,8 @@ from apps.subscription.constants import PaymentStatus
 from apps.subscription.models import Plan, Subscription
 from apps.user.models import Country
 from apps.user.serializers import FullUserInfoSerializer
+from apps.billing.services import BillingService
+from apps.billing.stripe_service import retrieve_checkout_session
 
 User = get_user_model()
 
@@ -404,4 +406,41 @@ class StripeWebhookView(APIView):
                 },
             )
             user_subscription.save()
+
+        # Handle balance top-up via Checkout Session
+        if event_type == "checkout.session.completed":
+            session = data["object"]
+            metadata = session.get("metadata", {})
+            
+            # Check if this is a balance top-up
+            if metadata.get("type") == "balance_topup":
+                from decimal import Decimal
+                from django.contrib.auth import get_user_model
+                
+                User = get_user_model()
+                user_id = metadata.get("user_id")
+                amount_str = metadata.get("amount")
+                
+                if user_id and amount_str:
+                    try:
+                        user = User.objects.get(id=user_id)
+                        amount = Decimal(amount_str)
+                        
+                        # Create top-up transaction
+                        BillingService.create_topup_transaction(
+                            user=user,
+                            amount=amount,
+                            external_id=session.get("id"),
+                        )
+                        stripe_logger.info(
+                            f"Balance top-up completed for user {user_id}: ${amount}"
+                        )
+                    except User.DoesNotExist:
+                        stripe_logger.error(f"User {user_id} not found for balance top-up")
+                    
+                    except Exception as e:
+                        stripe_logger.error(
+                            f"Failed to process balance top-up for user {user_id}: {str(e)}"
+                        )
+
         return Response({"accepted": True})  # returning response only to prevent issues
