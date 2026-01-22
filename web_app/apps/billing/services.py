@@ -59,6 +59,16 @@ class BillingService:
 
         service_request.reserve_funds()
 
+        # Schedule Celery task for auto-confirmation after timeout
+        from apps.billing.tasks import auto_confirm_service_request
+        
+        timeout_seconds = getattr(settings, "BILLING_AUTO_CONFIRM_TIMEOUT", 120)  # Default: 2 minutes
+        
+        auto_confirm_service_request.apply_async(
+            args=[str(service_request.id)],
+            countdown=timeout_seconds,
+        )
+        
         return service_request
 
     
@@ -153,8 +163,16 @@ class BillingService:
             # Refund reserved funds if any
             service_request.refund_reserved_funds()
         
-        elif new_status_enum == ServiceStatus.CONFIRMED and old_status == ServiceStatus.PENDING:                    
-            pass
+        elif new_status_enum == ServiceStatus.CONFIRMED and old_status == ServiceStatus.PENDING:
+            # Create CAPTURE transaction (final charge) for history
+            # Note: RESERVE already decreased balance, CAPTURE is for history only
+            BalanceTransaction.objects.create(
+                user=service_request.user,
+                direction=TransactionDirection.OUT,
+                kind=TransactionKind.CAPTURE,
+                amount=service_request.reserved_amount,
+                service_request=service_request,
+            )
         
         service_request.status = new_status_enum
         service_request.save(update_fields=["status"])

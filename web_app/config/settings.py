@@ -369,6 +369,9 @@ CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_ALWAYS_EAGER = env.bool("CELERY_TASK_ALWAYS_EAGER", default=False)
 
+# BILLING
+BILLING_AUTO_CONFIRM_TIMEOUT = env.int("BILLING_AUTO_CONFIRM_TIMEOUT", default=120)  # 2 minutes in seconds
+
 LOG_REQUESTS = env.bool("LOG_REQUESTS", default=True)  # to enable log-request middleware
 LOG_ADMIN_REQUESTS = env.bool("LOG_ADMIN_REQUESTS", default=False)
 LOG_API_REQUESTS = env.bool("LOG_API_REQUESTS", default=True)
