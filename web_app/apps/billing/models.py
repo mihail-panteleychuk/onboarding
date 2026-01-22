@@ -43,18 +43,19 @@ class BalanceTransactionQuerySet(models.QuerySet):
     """Custom queryset for balance transactions."""
 
     def for_user(self, user) -> "BalanceTransactionQuerySet":
-        """
-        Filter transactions for a specific user.        
-        """
+        """Filter transactions for a specific user."""
         return self.filter(user=user)
         
 
     def calculate_balance(self) -> Decimal:
         """
         Calculate total balance from transactions.        
+        Note: CAPTURE transactions are excluded from balance calculation
+        because RESERVE already decreased the balance. CAPTURE is for history only.
         """
         total = (
-            self.annotate(
+            self.exclude(kind=TransactionKind.CAPTURE)  # Exclude CAPTURE (already accounted in RESERVE)
+            .annotate(
                 effective_amount=Case(
                     When(direction=TransactionDirection.IN, then=F("amount")),
                     When(direction=TransactionDirection.OUT, then=-F("amount")),
@@ -272,8 +273,7 @@ class ServiceRequest(BaseUuidModel):
 
     def cancel(self) -> Optional["BalanceTransaction"]:
         """Cancel the request and refund reserved funds.
-        Changes status to CANCELLED and refunds reserved funds if any.
-        """
+        Changes status to CANCELLED and refunds reserved funds if any."""
         
         if self.status == ServiceStatus.CANCELLED:
             return None

@@ -3,6 +3,7 @@ import os
 
 from celery import Celery
 from celery.app.task import Task
+from celery.schedules import crontab
 from celery.signals import before_task_publish, setup_logging
 from celery.utils import abstract
 
@@ -14,6 +15,14 @@ logger = logging.getLogger(__name__)
 
 celery_app = Celery("inHome")
 celery_app.config_from_object("django.conf:settings", namespace="CELERY")
+
+# Celery Beat schedule for periodic tasks
+celery_app.conf.beat_schedule = {
+    "process-stuck-billing-requests": {
+        "task": "apps.billing.tasks.process_stuck_pending_requests",
+        "schedule": crontab(minute="*/5"),  # Every 5 minutes
+    },
+}
 
 
 @abstract.CallableTask.register
@@ -78,7 +87,6 @@ def setup_celery_logging(**kwargs):  # noqa
     logging.config.dictConfig(settings.LOGGING)
 
 
-# Replace default Task class with our custom one
 celery_app.Task = AppContextAwareTask  # noqa
 
 celery_app.autodiscover_tasks()
