@@ -24,11 +24,18 @@ from apps.user.models import User
 
 
 class ServiceTypeViewSet(viewsets.ReadOnlyModelViewSet):
-    """ViewSet for listing and retrieving service types."""
+    """ViewSet for listing service types (read-only, no detail view needed)."""
 
     queryset = ServiceType.objects.filter(is_active=True)
     serializer_class = ServiceTypeSerializer
     permission_classes = [permissions.IsAuthenticated]
+    
+    def retrieve(self, request, *args, **kwargs):
+        """Disable detail view - only list is needed."""
+        return Response(
+            {"detail": "Service type detail view is not available. Use list endpoint."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
 
 
 class BalanceView(APIView):
@@ -115,10 +122,15 @@ class BalanceTopUpView(APIView):
 
 
 class ServiceRequestViewSet(viewsets.ModelViewSet):
-    """ViewSet for service requests."""
+    """ViewSet for service requests.
+    
+    Only list, create, and cancel actions are available.
+    Update/delete operations are disabled.
+    """
 
     serializer_class = ServiceRequestSerializer
     permission_classes = [permissions.IsAuthenticated]
+    http_method_names = ["get", "post"]  # Disable PUT, PATCH, DELETE
 
     def get_queryset(self):
         """Filter queryset based on user role."""
@@ -127,7 +139,9 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
         # Admin can see all requests, user can see only their own
         if user.role == User.UserRoleChoices.ADMIN:
             return ServiceRequest.objects.all().select_related("user", "service_type")
+        
         return ServiceRequest.objects.filter(user=user).select_related("user", "service_type")
+        
 
     @swagger_auto_schema(
         operation_description="Create a new service request.",
@@ -155,11 +169,47 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
             
             response_serializer = ServiceRequestSerializer(service_request)
             return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+        
         except Exception as e:
             return Response(
                 {"detail": str(e)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+    @swagger_auto_schema(
+        operation_description="Cancel a service request (user can cancel only pending requests).",
+        responses={
+            200: ServiceRequestSerializer,
+            400: openapi.Response(description="Request cannot be cancelled."),
+        },
+    )
+    def retrieve(self, request, *args, **kwargs):
+        """Disable detail view - use list endpoint to see all requests."""
+        return Response(
+            {"detail": "Service request detail view is not available. Use list endpoint."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    
+    def update(self, request, *args, **kwargs):
+        """Disable update - status changes will be handled by admin endpoints."""
+        return Response(
+            {"detail": "Direct update is not allowed. Use cancel endpoint or admin status change."},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
+    
+    def partial_update(self, request, *args, **kwargs):
+        """Disable partial update."""
+        return self.update(request, *args, **kwargs)
+
+    
+    def destroy(self, request, *args, **kwargs):
+        """Disable delete - use cancel endpoint instead."""
+        return Response(
+            {"detail": "Delete is not allowed. Use cancel endpoint to cancel requests."},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
 
     @swagger_auto_schema(
         operation_description="Cancel a service request (user can cancel only pending requests).",
