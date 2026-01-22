@@ -33,21 +33,29 @@ class BillingService:
         """Create a service request with balance check and fund reservation.
 
         This method:
-        1. Checks if user has sufficient balance.
+        1. Checks if user has sufficient balance (with row-level locking to prevent race conditions).
         2. Creates ServiceRequest with PENDING status.
         3. Reserves funds from user balance.
-        4. Returns the created request.        
+        4. Returns the created request.
+        
+        Uses select_for_update() to lock user's transactions during balance check
+        to prevent race conditions when multiple requests are created simultaneously.
         """
         if not service_type.is_active:
             raise ValidationError(
                 {"service_type": "Service type is not available for new requests."}
             )
 
-        if not BillingService.check_sufficient_balance(user, service_type.price_usd):
+        # Lock user's transactions to prevent race conditions
+        # This ensures that balance check and reservation happen atomically
+        locked_transactions = BalanceTransaction.objects.for_user(user).select_for_update()
+        current_balance = locked_transactions.calculate_balance()
+        
+        if current_balance < service_type.price_usd:
             raise ValidationError(
                 {
                     "balance": f"Insufficient balance. Required: {service_type.price_usd} USD, "
-                    f"available: {BillingService.get_user_balance(user)} USD."
+                    f"available: {current_balance} USD."
                 }
             )
 
