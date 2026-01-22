@@ -7,6 +7,8 @@ from django.contrib.auth.hashers import make_password
 from django.db.models import Q
 from django.utils.timezone import now
 from django.utils.translation import gettext_lazy as _
+from drf_yasg import openapi
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework import exceptions, generics, permissions
 from rest_framework.response import Response
 from rest_framework.status import HTTP_200_OK, HTTP_400_BAD_REQUEST, HTTP_401_UNAUTHORIZED
@@ -25,6 +27,7 @@ from apps.authentication.serializers import (
     ChangeEmailSerializer,
     CustomTokenObtainPairSerializer,
     CustomTokenRefreshSerializer,
+    SignUpSerializer,
 )
 from apps.authentication.utils import generate_temp_email
 from apps.core.auth import CustomRefreshToken
@@ -400,6 +403,32 @@ class ChangeUserEmail(generics.CreateAPIView):
 class SendConfirmationEmail(APIView, BaseAuthView):
     permission_classes = [permissions.AllowAny]
 
+    @swagger_auto_schema(
+        operation_description="Подтверждение email по коду из письма",
+        manual_parameters=[
+            openapi.Parameter(
+                "code",
+                openapi.IN_QUERY,
+                description="Код подтверждения из email",
+                type=openapi.TYPE_STRING,
+                required=True,
+            ),
+        ],
+        responses={
+            200: openapi.Response(
+                description="Email подтверждён, пользователь активирован",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        "refresh": openapi.Schema(type=openapi.TYPE_STRING),
+                        "access": openapi.Schema(type=openapi.TYPE_STRING),
+                        "user": openapi.Schema(type=openapi.TYPE_OBJECT),
+                    },
+                ),
+            ),
+            400: openapi.Response(description="Неверный или истёкший код"),
+        },
+    )
     def get(self, request):
         code = request.query_params.get("code", "")
         if not all([code, code.isdigit()]):
@@ -418,6 +447,25 @@ class SendConfirmationEmail(APIView, BaseAuthView):
             user.save()
             return self.generate_auth_response(user)
 
+    @swagger_auto_schema(
+        operation_description="Регистрация нового пользователя или отправка письма подтверждения email",
+        request_body=SignUpSerializer,
+        responses={
+            200: openapi.Response(
+                description="Письмо с подтверждением отправлено",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        "message": openapi.Schema(
+                            type=openapi.TYPE_STRING,
+                            example="Confirmation email was sent",
+                        ),
+                    },
+                ),
+            ),
+            400: openapi.Response(description="Ошибка валидации данных"),
+        },
+    )
     def post(self, request):
         email = request.data.get("email")
         if not self.request.user.is_anonymous:

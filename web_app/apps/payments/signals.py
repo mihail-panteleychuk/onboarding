@@ -1,3 +1,5 @@
+import logging
+
 from django.contrib.auth import get_user_model
 from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
@@ -10,6 +12,8 @@ from apps.payments.utils import (
     sync_user_data,
     update_customer_billing_info,
 )
+
+stripe_logger = logging.getLogger("stripe")
 
 UserModel = get_user_model()
 
@@ -25,7 +29,14 @@ def create_or_update_customer_in_stripe(sender, instance, created, **kwargs):
     """
     if isinstance(instance, UserModel):
         if created:
-            create_stripe_customer(instance)
+            try:
+                create_stripe_customer(instance)
+            except Exception as e:  # noqa: E722
+                # In local development, Stripe keys might be missing.
+                # Do not interrupt user creation, but log the error.
+                stripe_logger.warning(
+                    f"Failed to create Stripe customer for user {instance.id}: {str(e)}"
+                )
         else:
             try:
                 if instance.is_deleted and instance.payment_service_user_id:
@@ -33,7 +44,10 @@ def create_or_update_customer_in_stripe(sender, instance, created, **kwargs):
                     instance.payment_service_user_id = None
                     instance.save()
                 sync_user_data(instance)
-            except:  # noqa: E722
+            except Exception as e:  # noqa: E722
+                stripe_logger.warning(
+                    f"Failed to sync Stripe data for user {instance.id}: {str(e)}"
+                )
                 instance.payment_service_user_id = None
                 instance.save()
 
@@ -49,8 +63,10 @@ def remove_customer_from_stripe(sender, instance, **kwargs):
         try:
             cancel_all_user_subscriptions(instance.payment_service_user_id)
             remove_customer(instance.payment_service_user_id)
-        except:  # noqa: E722
-            pass
+        except Exception as e:  # noqa: E722
+            stripe_logger.warning(
+                f"Failed to remove Stripe customer {instance.payment_service_user_id}: {str(e)}"
+            )
 
 
 @receiver(post_save, sender=BillingAddress)
