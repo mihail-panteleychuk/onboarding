@@ -148,6 +148,37 @@ class BalanceTransaction(BaseUuidModel):
         return -self.amount
 
 
+class ServiceRequestQuerySet(models.QuerySet):
+    """Custom queryset for service requests."""
+
+    def for_user(self, user) -> "ServiceRequestQuerySet":
+        """Filter requests for a specific user."""
+        return self.filter(user=user)
+
+
+    def for_admin(self) -> "ServiceRequestQuerySet":
+        """Return all requests (for admin)."""
+        return self.all()
+
+
+class ServiceRequestManager(models.Manager):
+    """Custom manager for service requests."""
+
+    def get_queryset(self) -> ServiceRequestQuerySet:
+        """Return custom queryset."""
+        return ServiceRequestQuerySet(self.model, using=self._db)
+
+
+    def for_user(self, user) -> ServiceRequestQuerySet:
+        """Filter requests for a specific user."""
+        return self.get_queryset().for_user(user)
+        
+
+    def for_admin(self) -> ServiceRequestQuerySet:
+        """Return all requests (for admin)."""
+        return self.get_queryset().for_admin()
+
+
 class ServiceRequest(BaseUuidModel):
     """Represents a user's request for a particular service type."""
 
@@ -176,6 +207,8 @@ class ServiceRequest(BaseUuidModel):
         default=Decimal("0.00"),
         help_text="Amount reserved from user balance when the request was created (USD).",
     )
+
+    objects = ServiceRequestManager()
 
     class Meta:
         verbose_name = "Service request"

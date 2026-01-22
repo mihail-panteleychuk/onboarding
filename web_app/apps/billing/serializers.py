@@ -40,12 +40,18 @@ class ServiceRequestSerializer(serializers.ModelSerializer):
 
     service_type = ServiceTypeSerializer(read_only=True)
     service_type_id = serializers.UUIDField(write_only=True, required=False)
+    user_email = serializers.CharField(source="user.email", read_only=True)
+    user_first_name = serializers.CharField(source="user.first_name", read_only=True)
+    user_last_name = serializers.CharField(source="user.last_name", read_only=True)
 
     class Meta:
         model = ServiceRequest
         fields = [
             "id",
             "user",
+            "user_email",
+            "user_first_name",
+            "user_last_name",
             "service_type",
             "service_type_id",
             "status",
@@ -73,6 +79,12 @@ class CreateServiceRequestSerializer(serializers.Serializer):
         
         except ServiceType.DoesNotExist:
             raise serializers.ValidationError("Service type not found.")
+
+
+class ChangeStatusSerializer(serializers.Serializer):
+    """Serializer for changing service request status (admin only)."""
+
+    status = serializers.ChoiceField(choices=ServiceStatus.choices, required=True)
 
 
 class BalanceTopUpSerializer(serializers.Serializer):

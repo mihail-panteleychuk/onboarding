@@ -85,6 +85,85 @@ class BillingService:
     
     @staticmethod
     @db_transaction.atomic
+    def cancel_service_request(
+        user,
+        service_request: ServiceRequest,
+    ) -> Optional[BalanceTransaction]:
+        """Cancel a service request (handles both user and admin cases).        
+        - User can only cancel pending requests.
+        - Admin can cancel any request.
+        """
+        from apps.user.models import User
+        
+        # Admin can cancel any request using status change
+        if user.role == User.UserRoleChoices.ADMIN:
+            BillingService.change_service_request_status(
+                service_request=service_request,
+                new_status=ServiceStatus.CANCELLED.value,
+            )            
+            return None
+        
+        # User can only cancel pending requests
+        return BillingService.cancel_service_request_by_user(
+            user=user,
+            service_request=service_request,
+        )
+
+    
+    @staticmethod
+    @db_transaction.atomic
+    def change_service_request_status(
+        service_request: ServiceRequest,
+        new_status: str,
+    ) -> ServiceRequest:
+        """Change service request status (admin only).
+        
+        Valid status transitions:
+        - pending → confirmed, cancelled
+        - confirmed → in_progress, cancelled
+        - in_progress → completed, cancelled
+        - completed → (no transitions allowed)
+        - cancelled → (no transitions allowed)
+        
+        When status changes to confirmed, reserved funds are captured (final charge).
+        When status changes to cancelled, reserved funds are refunded.
+        """
+        old_status = service_request.status
+        new_status_enum = ServiceStatus(new_status)
+        
+        # Validate status transition
+        valid_transitions = {
+            ServiceStatus.PENDING: [ServiceStatus.CONFIRMED, ServiceStatus.CANCELLED],
+            ServiceStatus.CONFIRMED: [ServiceStatus.IN_PROGRESS, ServiceStatus.CANCELLED],
+            ServiceStatus.IN_PROGRESS: [ServiceStatus.COMPLETED, ServiceStatus.CANCELLED],
+            ServiceStatus.COMPLETED: [],  # No transitions from completed
+            ServiceStatus.CANCELLED: [],   # No transitions from cancelled
+        }
+        
+        if new_status_enum not in valid_transitions.get(old_status, []):
+            raise ValidationError(
+                {
+                    "status": f"Cannot change status from {old_status} to {new_status}. "
+                    f"Valid transitions: {[s.value for s in valid_transitions.get(old_status, [])]}"
+                }
+            )
+        
+        # Handle status change logic
+        if new_status_enum == ServiceStatus.CANCELLED:
+            # Refund reserved funds if any
+            service_request.refund_reserved_funds()
+        
+        elif new_status_enum == ServiceStatus.CONFIRMED and old_status == ServiceStatus.PENDING:                    
+            pass
+        
+        service_request.status = new_status_enum
+        service_request.save(update_fields=["status"])
+        
+        return service_request
+
+    
+    @staticmethod
+    @db_transaction.atomic
     def create_topup_transaction(
         user,
         amount: Decimal,
@@ -101,6 +180,7 @@ class BillingService:
                 kind=TransactionKind.TOPUP,
                 external_id=external_id,
             ).first()
+            
             if existing:
                 return existing
 
