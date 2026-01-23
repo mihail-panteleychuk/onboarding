@@ -115,3 +115,27 @@ class BalanceResponseSerializer(serializers.Serializer):
 
     balance = serializers.DecimalField(max_digits=10, decimal_places=2)
     transactions = BalanceTransactionSerializer(many=True, read_only=True)
+
+
+class UserBalanceSerializer(serializers.Serializer):
+    """Serializer for user balance in list (for admin)."""
+
+    user_id = serializers.UUIDField()
+    user_email = serializers.EmailField()
+    user_first_name = serializers.CharField(allow_null=True)
+    user_last_name = serializers.CharField(allow_null=True)
+    balance = serializers.DecimalField(max_digits=10, decimal_places=2)
+
+
+class UserBalanceListSerializer(serializers.Serializer):
+    """Serializer for list of user balances (admin only).
+    
+    Note: This is used for paginated responses, which include:
+    - results: list of user balances
+    - count: total count
+    - next: link to next page (if exists)
+    - previous: link to previous page (if exists)
+    """
+    
+    results = UserBalanceSerializer(many=True)
+    count = serializers.IntegerField()

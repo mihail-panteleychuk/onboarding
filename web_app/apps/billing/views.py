@@ -6,6 +6,7 @@ from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import filters, permissions, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -14,10 +15,6 @@ from apps.billing.filters import ServiceRequestFilter
 from apps.billing.models import BalanceTransaction, ServiceRequest, ServiceType
 
 
-class CustomSearchFilter(filters.SearchFilter):
-    """SearchFilter with custom search parameter name."""
-    
-    search_param = "search"
 from apps.billing.serializers import (
     BalanceResponseSerializer,
     BalanceTopUpSerializer,
@@ -26,11 +23,27 @@ from apps.billing.serializers import (
     CreateServiceRequestSerializer,
     ServiceRequestSerializer,
     ServiceTypeSerializer,
+    UserBalanceListSerializer,
+    UserBalanceSerializer,
 )
 from apps.billing.services import BillingService
 from apps.billing.stripe_service import create_checkout_session_for_topup
 from apps.core.permissions import IsCustomAdminOrManagerUser
 from apps.user.models import User
+
+
+class CustomSearchFilter(filters.SearchFilter):
+    """SearchFilter with custom search parameter name."""
+    
+    search_param = "search"
+
+
+class BalanceListPagination(PageNumberPagination):
+    """Pagination for balance list (admin only)."""
+    
+    page_size = 20
+    page_size_query_param = "page_size"
+    max_page_size = 100
 
 
 class ServiceTypeViewSet(viewsets.ReadOnlyModelViewSet):
@@ -39,6 +52,7 @@ class ServiceTypeViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = ServiceType.objects.filter(is_active=True)
     serializer_class = ServiceTypeSerializer
     permission_classes = [permissions.IsAuthenticated]
+    
     
     @swagger_auto_schema(
         operation_description=(
@@ -55,6 +69,7 @@ class ServiceTypeViewSet(viewsets.ReadOnlyModelViewSet):
         """List all active service types."""
         return super().list(request, *args, **kwargs)
     
+   
     @swagger_auto_schema(auto_schema=None)  # Hide from Swagger
     def retrieve(self, request, *args, **kwargs):
         """Disable detail view - only list is needed."""
@@ -65,37 +80,306 @@ class ServiceTypeViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 class BalanceView(APIView):
-    """View for getting user balance and transaction history."""
+    """View for getting user balance and transaction history.
+    
+    Access rules:
+    - If user_id is not provided:
+      * Admin: returns list of all users with their balances
+      * User: returns own balance and transactions
+    - If user_id is provided:
+      * Admin: returns balance and transactions for specified user
+      * User: returns own balance if user_id matches, otherwise 403 Forbidden
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    
+    @swagger_auto_schema(
+        operation_description=(
+            "Get user balance and transaction history.\n\n"
+            "**Access rules:**\n"
+            "- **Without user_id parameter:**\n"
+            "  - Admin: returns list of all users with their balances\n"
+            "  - User: returns own balance and transactions\n\n"
+            "- **With user_id parameter:**\n"
+            "  - Admin: returns balance and transactions for specified user\n"
+            "  - User: returns own balance if user_id matches, otherwise 403 Forbidden\n\n"
+            "**Response format:**\n"
+            "- Single user: balance + last 20 transactions\n"
+            "- List (admin only): paginated list of users with their balances (no transactions in list)\n\n"
+            "**Pagination (admin list only):**\n"
+            "- Use `?page=1&page_size=20` to control pagination\n"
+            "- Response includes: `count`, `next`, `previous`, `results`\n\n"
+            "**Note:** Only admins can view other users' balances. Use `/api/billing/balance/transactions/?user_id=<uuid>` to view transactions."
+        ),
+        manual_parameters=[
+            openapi.Parameter(
+                "user_id",
+                openapi.IN_QUERY,
+                description="User ID to get balance for (admin only). If not provided, admin gets paginated list of all users, user gets own balance.",
+                type=openapi.TYPE_STRING,
+                format=openapi.FORMAT_UUID,
+                required=False,
+            ),
+            openapi.Parameter(
+                "page",
+                openapi.IN_QUERY,
+                description="Page number for pagination (only for admin list view, default: 1)",
+                type=openapi.TYPE_INTEGER,
+                required=False,
+            ),
+            openapi.Parameter(
+                "page_size",
+                openapi.IN_QUERY,
+                description="Number of items per page (only for admin list view, default: 20, max: 100)",
+                type=openapi.TYPE_INTEGER,
+                required=False,
+            ),
+        ],
+        responses={
+            200: openapi.Response(
+                description="Balance information",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    oneOf=[
+                        openapi.Schema(
+                            type=openapi.TYPE_OBJECT,
+                            properties={
+                                "balance": openapi.Schema(type=openapi.TYPE_NUMBER, description="Balance in USD"),
+                                "transactions": openapi.Schema(
+                                    type=openapi.TYPE_ARRAY,
+                                    items=openapi.Schema(type=openapi.TYPE_OBJECT),
+                                    description="Last 20 transactions",
+                                ),
+                            },
+                        ),
+                        openapi.Schema(
+                            type=openapi.TYPE_OBJECT,
+                            properties={
+                                "count": openapi.Schema(type=openapi.TYPE_INTEGER, description="Total number of users"),
+                                "next": openapi.Schema(type=openapi.TYPE_STRING, nullable=True, description="URL to next page"),
+                                "previous": openapi.Schema(type=openapi.TYPE_STRING, nullable=True, description="URL to previous page"),
+                                "results": openapi.Schema(
+                                    type=openapi.TYPE_ARRAY,
+                                    items=openapi.Schema(
+                                        type=openapi.TYPE_OBJECT,
+                                        properties={
+                                            "user_id": openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_UUID),
+                                            "user_email": openapi.Schema(type=openapi.TYPE_STRING),
+                                            "user_first_name": openapi.Schema(type=openapi.TYPE_STRING, nullable=True),
+                                            "user_last_name": openapi.Schema(type=openapi.TYPE_STRING, nullable=True),
+                                            "balance": openapi.Schema(type=openapi.TYPE_NUMBER),
+                                        },
+                                    ),
+                                    description="List of users with their balances",
+                                ),
+                            },
+                        ),
+                    ],
+                ),
+            ),
+            403: openapi.Response(description="Access denied. User cannot view other users' balances."),
+            404: openapi.Response(description="User not found."),
+        },
+        tags=["Balance"],
+    )
+    def get(self, request):
+        """Get balance and transactions based on user role and user_id parameter."""
+        current_user = request.user
+        user_id_param = request.query_params.get("user_id")
+        
+        # Authentication check
+        if not current_user.is_authenticated or not hasattr(current_user, 'role'):
+            return Response(
+                {"detail": "Authentication required."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        
+        # If user_id is not passed
+        if not user_id_param:
+            # The admin receives a list of all users with balances (with pagination)
+            if current_user.role == User.UserRoleChoices.ADMIN:
+                users = User.objects.filter(is_active=True, is_deleted=False).order_by("email")                
+                
+                paginator = BalanceListPagination()
+                paginated_users = paginator.paginate_queryset(users, request)
+                
+                user_balances = []
+                
+                for user in paginated_users:
+                    balance = BillingService.get_user_balance(user)
+                    user_balances.append({
+                        "user_id": user.id,
+                        "user_email": user.email,
+                        "user_first_name": user.first_name,
+                        "user_last_name": user.last_name,
+                        "balance": balance,
+                    })                
+                
+                return paginator.get_paginated_response(user_balances)            
+            
+            else:
+                balance = BillingService.get_user_balance(current_user)
+                transactions = BalanceTransaction.objects.for_user(current_user)[:20]
+                
+                serializer = BalanceResponseSerializer({
+                    "balance": balance,
+                    "transactions": transactions,
+                })
+                return Response(serializer.data)
+        
+        # If user_id is passed
+        else:
+            try:
+                target_user = User.objects.get(id=user_id_param)
+            
+            except User.DoesNotExist:
+                return Response(
+                    {"detail": "User not found."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            
+            # The admin can see the balance of any user.
+            if hasattr(current_user, 'role') and current_user.role == User.UserRoleChoices.ADMIN:
+                balance = BillingService.get_user_balance(target_user)
+                transactions = BalanceTransaction.objects.for_user(target_user)[:20]
+                
+                serializer = BalanceResponseSerializer({
+                    "balance": balance,
+                    "transactions": transactions,
+                })
+                return Response(serializer.data)
+            
+            # The user can only see his own balance.
+            else:
+                if target_user.id != current_user.id:
+                    return Response(
+                        {"detail": "You do not have permission to view this user's balance."},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )                
+                
+                balance = BillingService.get_user_balance(current_user)
+                transactions = BalanceTransaction.objects.for_user(current_user)[:20]
+                
+                serializer = BalanceResponseSerializer({
+                    "balance": balance,
+                    "transactions": transactions,
+                })
+                return Response(serializer.data)
+
+
+class BalanceTransactionsView(APIView):
+    """View for getting user transactions (admin only).
+    
+    Allows admins to view transactions for any user.
+    Users can only view their own transactions.
+    """
 
     permission_classes = [permissions.IsAuthenticated]
 
     @swagger_auto_schema(
         operation_description=(
-            "Get current user balance and transaction history.\n\n"
-            "Returns:\n"
-            "- Current balance in USD (calculated from all transactions)\n"
-            "- Last 20 transactions (top-ups, reserves, refunds, etc.)\n\n"
-            "Each user can only see their own balance and transactions."
+            "Get transaction history for a user.\n\n"
+            "**Access rules:**\n"
+            "- **Admin:** can view transactions for any user (user_id required)\n"
+            "- **User:** can view only own transactions (user_id must match own ID or be omitted)\n\n"
+            "**Parameters:**\n"
+            "- `user_id`: User ID to get transactions for (required for admin, optional for user)\n"
+            "- `page`: Page number for pagination (default: 1)\n"
+            "- `page_size`: Number of items per page (default: 20, max: 100)\n\n"
+            "**Note:** Transactions are ordered by creation date (newest first)."
         ),
+        manual_parameters=[
+            openapi.Parameter(
+                "user_id",
+                openapi.IN_QUERY,
+                description="User ID to get transactions for. Required for admin, optional for user (defaults to own ID).",
+                type=openapi.TYPE_STRING,
+                format=openapi.FORMAT_UUID,
+                required=False,
+            ),
+            openapi.Parameter(
+                "page",
+                openapi.IN_QUERY,
+                description="Page number for pagination (default: 1)",
+                type=openapi.TYPE_INTEGER,
+                required=False,
+            ),
+            openapi.Parameter(
+                "page_size",
+                openapi.IN_QUERY,
+                description="Number of items per page (default: 20, max: 100)",
+                type=openapi.TYPE_INTEGER,
+                required=False,
+            ),
+        ],
         responses={
-            200: BalanceResponseSerializer,
+            200: openapi.Response(
+                description="Paginated list of transactions",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        "count": openapi.Schema(type=openapi.TYPE_INTEGER, description="Total number of transactions"),
+                        "next": openapi.Schema(type=openapi.TYPE_STRING, nullable=True, description="URL to next page"),
+                        "previous": openapi.Schema(type=openapi.TYPE_STRING, nullable=True, description="URL to previous page"),
+                        "results": openapi.Schema(
+                            type=openapi.TYPE_ARRAY,
+                            items=openapi.Schema(type=openapi.TYPE_OBJECT),
+                            description="List of transactions",
+                        ),
+                    },
+                ),
+            ),
+            403: openapi.Response(description="Access denied. User cannot view other users' transactions."),
+            404: openapi.Response(description="User not found."),
         },
         tags=["Balance"],
     )
     def get(self, request):
-        """Get current balance and recent transactions."""
-        user = request.user
-        balance = BillingService.get_user_balance(user)
+        """Get transactions for a user."""
+        current_user = request.user
         
-        transactions = BalanceTransaction.objects.for_user(user)[:20]
+        # Authentication check
+        if not current_user.is_authenticated or not hasattr(current_user, 'role'):
+            return Response(
+                {"detail": "Authentication required."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
         
-        serializer = BalanceResponseSerializer(
-            {
-                "balance": balance,
-                "transactions": transactions,
-            }
-        )
-        return Response(serializer.data)
+        user_id_param = request.query_params.get("user_id")
+        
+        # Defining the target user
+        if user_id_param:
+            try:
+                target_user = User.objects.get(id=user_id_param)
+            
+            except User.DoesNotExist:
+                return Response(
+                    {"detail": "User not found."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            
+            # Checking access rights
+            if not hasattr(current_user, 'role') or current_user.role != User.UserRoleChoices.ADMIN:
+                # The user can only see their own transactions.
+                if target_user.id != current_user.id:
+                    return Response(
+                        {"detail": "You do not have permission to view this user's transactions."},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+        else:
+            # if user_id is not specified, the current user is used.
+            target_user = current_user
+        
+        # Receiving transactions
+        transactions = BalanceTransaction.objects.for_user(target_user).order_by("-created")
+        
+        # We use pagination
+        paginator = BalanceListPagination()
+        paginated_transactions = paginator.paginate_queryset(transactions, request)
+        
+        serializer = BalanceTransactionSerializer(paginated_transactions, many=True)
+        return paginator.get_paginated_response(serializer.data)
 
 
 class BalanceTopUpView(APIView):
@@ -219,6 +503,10 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
         """Filter queryset based on user role."""
         user = self.request.user
         queryset = ServiceRequest.objects.select_related("user", "service_type")
+        
+        # Handle Swagger schema generation (AnonymousUser)
+        if not user.is_authenticated or not hasattr(user, 'role'):
+            return queryset.none()
         
         # Admin can see all requests, user can see only their own
         if user.role == User.UserRoleChoices.ADMIN:

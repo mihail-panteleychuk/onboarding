@@ -61,8 +61,13 @@ class AdminPanelUsersViewSet(viewsets.ModelViewSet):
 class ListOfRolesView(generics.RetrieveAPIView):
     queryset = get_user_model().objects.none()
     permission_classes = (IsCustomAdminOrManagerUser,)
+    serializer_class = None  # Не используем serializer, переопределяем get_serializer_class
+
+    def get_serializer_class(self):
+        """Override to avoid Swagger schema generation error."""
+        return None
 
     def get(self, request, *args, **kwargs):
-        roles = dict(get_user_model().ROLE_CHOICES)
+        roles = dict(get_user_model().UserRoleChoices.choices)
         data = [{"id": key, "title": value} for key, value in roles.items()]
         return Response(data, status=status.HTTP_200_OK)
