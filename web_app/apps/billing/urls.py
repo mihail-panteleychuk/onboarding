@@ -5,6 +5,7 @@ from rest_framework import routers
 
 from apps.billing.views import (
     BalanceTopUpView,
+    BalanceTransactionsExportView,
     BalanceTransactionsView,
     BalanceView,
     ServiceRequestViewSet,
@@ -18,6 +19,7 @@ router.register("requests", ServiceRequestViewSet, basename="service-request")
 urlpatterns = [
     path("balance/", BalanceView.as_view(), name="balance"),
     path("balance/transactions/", BalanceTransactionsView.as_view(), name="balance-transactions"),
+    path("balance/transactions/export/", BalanceTransactionsExportView.as_view(), name="balance-transactions-export"),
     path("balance/topup/", BalanceTopUpView.as_view(), name="balance-topup"),
     path("", include(router.urls)),
 ]

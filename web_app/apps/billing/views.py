@@ -1,5 +1,10 @@
 """Views for billing API endpoints."""
 
+import csv
+from datetime import datetime
+from typing import Iterable, List
+
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django_filters import rest_framework as rest_filter
 from drf_yasg import openapi
@@ -361,6 +366,7 @@ class BalanceTransactionsView(APIView):
             
             # Checking access rights
             if not hasattr(current_user, 'role') or current_user.role != User.UserRoleChoices.ADMIN:
+                
                 # The user can only see their own transactions.
                 if target_user.id != current_user.id:
                     return Response(
@@ -380,6 +386,160 @@ class BalanceTransactionsView(APIView):
         
         serializer = BalanceTransactionSerializer(paginated_transactions, many=True)
         return paginator.get_paginated_response(serializer.data)
+
+
+class BalanceTransactionsExportView(APIView):
+    """View for exporting transactions to CSV.    
+    Separate view for export endpoint to avoid conflicts with GET method.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_description=(
+            "Export transactions to CSV file.\n\n"
+            "**Access rules:**\n"
+            "- **Admin:** can export transactions for any user (user_id parameter)\n"
+            "- **User:** can export only own transactions\n\n"
+            "**Parameters:**\n"
+            "- `user_id`: User ID to export transactions for (admin only, optional for user)\n"
+            "- `fields`: Comma-separated list of fields to include in CSV\n"
+            "  Available fields: id, user_id, user_email, direction, kind, amount, service_request_id, external_id, created, updated\n"
+            "  Default: id, user_email, direction, kind, amount, service_request_id, created\n"
+            "- `ordering`: Sort by field (prefix '-' for descending, default: -created)\n\n"
+            "**Response:**\n"
+            "- CSV file with transaction data\n"
+            "- Content-Type: text/csv\n"
+            "- Filename: balance_transactions_YYYY-MM-DD_HH-MM-SS.csv"
+        ),
+        manual_parameters=[
+            openapi.Parameter(
+                "user_id",
+                openapi.IN_QUERY,
+                description="User ID to export transactions for. Required for admin, optional for user (defaults to own ID).",
+                type=openapi.TYPE_STRING,
+                format=openapi.FORMAT_UUID,
+                required=False,
+            ),
+            openapi.Parameter(
+                "fields",
+                openapi.IN_QUERY,
+                description="Comma-separated list of fields to include. Available: id, user_id, user_email, direction, kind, amount, service_request_id, external_id, created, updated",
+                type=openapi.TYPE_STRING,
+                required=False,
+            ),
+            openapi.Parameter(
+                "ordering",
+                openapi.IN_QUERY,
+                description="Sort by field. Prefix with '-' for descending. Default: -created",
+                type=openapi.TYPE_STRING,
+                required=False,
+            ),
+        ],
+        responses={
+            200: openapi.Response(
+                description="CSV file with transactions",
+                schema=openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_BINARY),
+            ),
+            403: openapi.Response(description="Access denied. User cannot export other users' transactions."),
+            404: openapi.Response(description="User not found."),
+        },
+        tags=["Balance"],
+    )
+    def get(self, request):
+        """Export transactions to CSV."""
+        current_user = request.user
+        
+        # Authentication check
+        if not current_user.is_authenticated or not hasattr(current_user, 'role'):
+            return Response(
+                {"detail": "Authentication required."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        
+        user_id_param = request.query_params.get("user_id")
+        
+        # Define target user
+        if user_id_param:
+            try:
+                target_user = User.objects.get(id=user_id_param)
+            except User.DoesNotExist:
+                return Response(
+                    {"detail": "User not found."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            
+            # Check access rights
+            if not hasattr(current_user, 'role') or current_user.role != User.UserRoleChoices.ADMIN:
+                if target_user.id != current_user.id:
+                    return Response(
+                        {"detail": "You do not have permission to export this user's transactions."},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+        else:
+            target_user = current_user
+        
+        # Get transactions
+        transactions = BalanceTransaction.objects.for_user(target_user).select_related("user", "service_request")
+        
+        # Apply ordering
+        ordering = request.query_params.get("ordering", "-created")
+        if ordering:
+            transactions = transactions.order_by(ordering)
+        
+        # Available fields mapping
+        available_fields = {
+            "id": lambda t: str(t.id),
+            "user_id": lambda t: str(t.user.id),
+            "user_email": lambda t: t.user.email,
+            "direction": lambda t: t.direction,
+            "kind": lambda t: t.kind,
+            "amount": lambda t: str(t.amount),
+            "service_request_id": lambda t: str(t.service_request.id) if t.service_request else "",
+            "external_id": lambda t: t.external_id or "",
+            "created": lambda t: t.created.strftime("%Y-%m-%d %H:%M:%S") if t.created else "",
+            "updated": lambda t: t.updated.strftime("%Y-%m-%d %H:%M:%S") if t.updated else "",
+        }
+        
+        # Get fields to export
+        fields_param = request.query_params.get("fields", "")
+        
+        if fields_param:
+            requested_fields = [f.strip() for f in fields_param.split(",")]
+            # Validate fields
+            valid_fields = [f for f in requested_fields if f in available_fields]
+            
+            if not valid_fields:
+                return Response(
+                    {"detail": "No valid fields specified."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            
+            export_fields = valid_fields
+        
+        else:
+            # Default fields
+            export_fields = ["id", "user_email", "direction", "kind", "amount", "service_request_id", "created"]
+        
+        # Create CSV response
+        response = HttpResponse(content_type="text/csv; charset=utf-8")
+        filename = f"balance_transactions_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv"
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        
+        # Write BOM for Excel compatibility
+        response.write('\ufeff')
+        
+        writer = csv.writer(response)
+        
+        # Write header
+        writer.writerow(export_fields)
+        
+        # Write data rows
+        for transaction in transactions:
+            row = [available_fields[field](transaction) for field in export_fields]
+            writer.writerow(row)
+        
+        return response
 
 
 class BalanceTopUpView(APIView):
@@ -505,7 +665,7 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
         queryset = ServiceRequest.objects.select_related("user", "service_type")
         
         # Handle Swagger schema generation (AnonymousUser)
-        if not user.is_authenticated or not hasattr(user, 'role'):
+        if not user.is_authenticated or not hasattr(user, "role"):
             return queryset.none()
         
         # Admin can see all requests, user can see only their own
@@ -680,6 +840,139 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
     def list(self, request, *args, **kwargs):
         """List service requests with search, filtering, and sorting."""
         return super().list(request, *args, **kwargs)
+
+    @swagger_auto_schema(
+        operation_description=(
+            "Export service requests to CSV.\n\n"
+            "**Access:**\n"
+            "- User: exports only their own requests (with all applied filters)\n"
+            "- Admin: exports all matching requests\n\n"
+            "**Filters & search:**\n"
+            "Same query parameters as for the list endpoint `/api/billing/requests/` "
+            "(search, status, user, service_type, created_after, created_before, "
+            "reserved_amount/reserved_amount_min/reserved_amount_max, ordering).\n\n"
+            "**Field selection:**\n"
+            "- Use `fields` query parameter to control exported columns, e.g. "
+            "`?fields=id,user_email,service_type_name,status,reserved_amount,created`.\n"
+            "- If `fields` is not provided, a default set of columns is used.\n\n"
+            "**Response:**\n"
+            "- Content-Type: `text/csv`\n"
+            "- Disposition: attachment with filename `service_requests.csv`."
+        ),
+        manual_parameters=[
+            openapi.Parameter(
+                "fields",
+                openapi.IN_QUERY,
+                description=(
+                    "Comma-separated list of fields to include in CSV. "
+                    "Available fields: id, user_id, user_email, user_first_name, "
+                    "user_last_name, service_type_id, service_type_name, "
+                    "service_type_price_usd, status, reserved_amount, created, updated."
+                ),
+                type=openapi.TYPE_STRING,
+                required=False,
+            ),
+        ],
+        responses={
+            200: openapi.Response(
+                description="CSV file with exported service requests.",
+                schema=openapi.Schema(type=openapi.TYPE_STRING),
+            ),
+            400: openapi.Response(description="Invalid fields parameter."),
+        },
+        tags=["Service Requests"],
+    )
+    @action(detail=False, methods=["get"], url_path="export")
+    def export(self, request):
+        """
+        Export service requests to CSV.
+        Uses the same filtering, search and ordering as the list endpoint.
+        """
+
+        # 1. Determine allowed fields and requested fields
+        allowed_fields = {
+            "id",
+            "user_id",
+            "user_email",
+            "user_first_name",
+            "user_last_name",
+            "service_type_id",
+            "service_type_name",
+            "service_type_price_usd",
+            "status",
+            "reserved_amount",
+            "created",
+            "updated",
+        }
+
+        default_fields: List[str] = [
+            "id",
+            "user_email",
+            "service_type_name",
+            "service_type_price_usd",
+            "status",
+            "reserved_amount",
+            "created",
+        ]
+
+        fields_param = request.query_params.get("fields")
+        
+        if fields_param:
+            requested_fields = [f.strip() for f in fields_param.split(",") if f.strip()]
+        
+        else:
+            requested_fields = default_fields
+
+        invalid_fields = [f for f in requested_fields if f not in allowed_fields]
+        
+        if invalid_fields:
+            return Response(
+                {
+                    "detail": (
+                        "Invalid fields: "
+                        + ", ".join(invalid_fields)
+                        + ". Allowed fields: "
+                        + ", ".join(sorted(allowed_fields))
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 2. Apply filters/search/ordering (without pagination)
+        queryset = self.filter_queryset(self.get_queryset())
+
+        # 3. Prepare HTTP response as CSV
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = 'attachment; filename="service_requests.csv"'
+
+        writer = csv.writer(response)
+        writer.writerow(requested_fields)
+
+        # 4. Helper to map object to row
+        def row_for(obj: ServiceRequest) -> Iterable:
+            service_type = obj.service_type
+            mapping = {
+                "id": str(obj.id),
+                "user_id": str(obj.user_id),
+                "user_email": getattr(obj.user, "email", None),
+                "user_first_name": getattr(obj.user, "first_name", None),
+                "user_last_name": getattr(obj.user, "last_name", None),
+                "service_type_id": str(service_type.id) if service_type else None,
+                "service_type_name": service_type.name if service_type else None,
+                "service_type_price_usd": (
+                    str(service_type.price_usd) if service_type else None
+                ),
+                "status": obj.status,
+                "reserved_amount": str(obj.reserved_amount),
+                "created": obj.created.strftime("%Y-%m-%d %H:%M:%S") if obj.created else "",
+                "updated": obj.updated.strftime("%Y-%m-%d %H:%M:%S") if obj.updated else "",
+            }
+            return [mapping.get(field) for field in requested_fields]
+
+        for obj in queryset.iterator(chunk_size=500):
+            writer.writerow(row_for(obj))
+
+        return response
 
     @swagger_auto_schema(
         operation_description=(
