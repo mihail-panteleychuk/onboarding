@@ -606,6 +606,18 @@ class BalanceTopUpView(APIView):
             )
         
         except Exception as e:
+            # Send notification about payment error
+            from apps.billing.tasks import send_payment_error_notification
+            
+            send_payment_error_notification.delay(
+                user_id=str(request.user.id),
+                error_message=str(e),
+                context={
+                    "amount": str(amount),
+                    "endpoint": "balance_topup",
+                },
+            )
+            
             return Response(
                 {"detail": str(e)},
                 status=status.HTTP_400_BAD_REQUEST,

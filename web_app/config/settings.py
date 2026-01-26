@@ -323,7 +323,7 @@ API_DOMAIN = env.str("API_DOMAIN")
 # PAYMENTS
 STRIPE_PUBLISHABLE_KEY = env.str("STRIPE_PUBLISHABLE_KEY")
 STRIPE_SECRET_KEY = env.str("STRIPE_SECRET_KEY")
-STRIPE_ACCOUNT_ID = env.str("STRIPE_ACCOUNT_ID")
+STRIPE_ACCOUNT_ID = env.str("STRIPE_ACCOUNT_ID", default="")
 STRIPE_WEBHOOK_SECRET = env.str("STRIPE_WEBHOOK_SECRET", default="")
 
 # https://inhouseapp.dataforest.tech/onboarding/checkout/payment/result
@@ -352,6 +352,10 @@ TEST_BUSSINESS_PROFILE = {
 FERNET_SECRET_KEY = env.str(
     "FERNET_SECRET_KEY",
 )  # at first time generate it using. `Fernet.generate_key()`
+
+# Slack notifications
+SLACK_WEBHOOK_URL = env.str("SLACK_WEBHOOK_URL", default="")
+SLACK_ENABLED = env.bool("SLACK_ENABLED", default=False)  # Set to True to enable Slack notifications
 
 SWAGGER_SETTINGS = {
     "SECURITY_DEFINITIONS": {

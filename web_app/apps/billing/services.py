@@ -52,6 +52,16 @@ class BillingService:
         current_balance = locked_transactions.calculate_balance()
         
         if current_balance < service_type.price_usd:
+            # Send notification about insufficient balance (no commit needed, just async)
+            from apps.billing.tasks import send_insufficient_balance_notification
+            
+            send_insufficient_balance_notification.delay(
+                user_id=str(user.id),
+                service_type_id=str(service_type.id),
+                required_amount=str(service_type.price_usd),
+                current_balance=str(current_balance),
+            )
+            
             raise ValidationError(
                 {
                     "balance": f"Insufficient balance. Required: {service_type.price_usd} USD, "
@@ -68,13 +78,21 @@ class BillingService:
         service_request.reserve_funds()
 
         # Schedule Celery task for auto-confirmation after timeout
-        from apps.billing.tasks import auto_confirm_service_request
+        from apps.billing.tasks import auto_confirm_service_request, send_service_request_created_notification
         
         timeout_seconds = getattr(settings, "BILLING_AUTO_CONFIRM_TIMEOUT", 120)  # Default: 2 minutes
         
-        auto_confirm_service_request.apply_async(
-            args=[str(service_request.id)],
-            countdown=timeout_seconds,
+        # Schedule tasks after transaction commit
+        db_transaction.on_commit(
+            lambda: auto_confirm_service_request.apply_async(
+                args=[str(service_request.id)],
+                countdown=timeout_seconds,
+            )
+        )
+        
+        # Send notification about created request after commit
+        db_transaction.on_commit(
+            lambda: send_service_request_created_notification.delay(str(service_request.id))
         )
         
         return service_request
@@ -185,6 +203,17 @@ class BillingService:
         service_request.status = new_status_enum
         service_request.save(update_fields=["status"])
         
+        # Send notification about status change after commit
+        from apps.billing.tasks import send_service_request_status_changed_notification
+        
+        db_transaction.on_commit(
+            lambda: send_service_request_status_changed_notification.delay(
+                service_request_id=str(service_request.id),
+                old_status=old_status.value,
+                new_status=new_status_enum.value,
+            )
+        )
+        
         return service_request
 
     
@@ -210,10 +239,22 @@ class BillingService:
             if existing:
                 return existing
 
-        return BalanceTransaction.objects.create(
+        transaction = BalanceTransaction.objects.create(
             user=user,
             direction=TransactionDirection.IN,
             kind=TransactionKind.TOPUP,
             amount=amount,
             external_id=external_id,
         )
+        
+        # Send notification about balance topup after transaction commit
+        from apps.billing.tasks import send_balance_topup_notification
+        
+        db_transaction.on_commit(
+            lambda: send_balance_topup_notification.delay(
+                user_id=str(user.id),
+                transaction_id=str(transaction.id),
+            )
+        )
+        
+        return transaction

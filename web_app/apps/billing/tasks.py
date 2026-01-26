@@ -9,7 +9,8 @@ from django.utils import timezone
 from django.conf import settings
 
 from apps.billing.constants import ServiceStatus
-from apps.billing.models import ServiceRequest
+from apps.billing.models import BalanceTransaction, ServiceRequest
+from apps.billing.notification_service import NotificationService
 from apps.billing.services import BillingService
 
 logger = logging.getLogger(__name__)
@@ -144,3 +145,143 @@ def process_stuck_pending_requests():
     
     logger.info(f"Processed {processed} out of {count} stuck request(s)")
     return {"status": "success", "processed": processed, "total": count}
+
+
+@shared_task
+def send_service_request_created_notification(service_request_id: str):
+    """Send notifications when a service request is created."""
+    try:
+        service_request = ServiceRequest.objects.get(id=service_request_id)
+        NotificationService.notify_service_request_created(service_request)
+        return {"status": "success"}
+    
+    except ServiceRequest.DoesNotExist:
+        logger.error(f"Service request {service_request_id} not found for notification")
+        return {"status": "error", "reason": "not_found"}
+    
+    except Exception as e:
+        logger.error(
+            f"Error sending service request created notification: {str(e)}",
+            exc_info=True,
+        )
+        return {"status": "error", "reason": str(e)}
+
+
+@shared_task
+def send_service_request_status_changed_notification(
+    service_request_id: str,
+    old_status: str,
+    new_status: str,
+):
+    """Send notifications when service request status changes."""
+    try:
+        service_request = ServiceRequest.objects.get(id=service_request_id)
+        old_status_enum = ServiceStatus(old_status)
+        new_status_enum = ServiceStatus(new_status)
+        NotificationService.notify_service_request_status_changed(
+            service_request=service_request,
+            old_status=old_status_enum,
+            new_status=new_status_enum,
+        )
+        return {"status": "success"}
+    
+    except ServiceRequest.DoesNotExist:
+        logger.error(f"Service request {service_request_id} not found for notification")
+        return {"status": "error", "reason": "not_found"}
+    
+    except Exception as e:
+        logger.error(
+            f"Error sending status changed notification: {str(e)}",
+            exc_info=True,
+        )
+        return {"status": "error", "reason": str(e)}
+
+
+@shared_task
+def send_balance_topup_notification(user_id: str, transaction_id: str):
+    """Send notifications when balance is topped up."""
+    try:
+        from apps.user.models import User
+        
+        user = User.objects.get(id=user_id)
+        transaction = BalanceTransaction.objects.get(id=transaction_id)
+        NotificationService.notify_balance_topup(
+            user=user,
+            amount=transaction.amount,
+            transaction=transaction,
+        )
+        return {"status": "success"}
+    
+    except (User.DoesNotExist, BalanceTransaction.DoesNotExist) as e:
+        logger.error(f"User or transaction not found for notification: {str(e)}")
+        return {"status": "error", "reason": "not_found"}
+    
+    except Exception as e:
+        logger.error(
+            f"Error sending balance topup notification: {str(e)}",
+            exc_info=True,
+        )
+        return {"status": "error", "reason": str(e)}
+
+
+@shared_task
+def send_insufficient_balance_notification(
+    user_id: str,
+    service_type_id: str,
+    required_amount: str,
+    current_balance: str,
+):
+    """Send notifications when user has insufficient balance."""
+    try:
+        from decimal import Decimal
+        
+        from apps.user.models import User
+        
+        from apps.billing.models import ServiceType
+        
+        user = User.objects.get(id=user_id)
+        service_type = ServiceType.objects.get(id=service_type_id)
+        NotificationService.notify_insufficient_balance(
+            user=user,
+            service_type=service_type,
+            required_amount=Decimal(required_amount),
+            current_balance=Decimal(current_balance),
+        )
+        return {"status": "success"}
+    
+    except (User.DoesNotExist, ServiceType.DoesNotExist) as e:
+        logger.error(f"User or service type not found for notification: {str(e)}")
+        return {"status": "error", "reason": "not_found"}
+    
+    except Exception as e:
+        logger.error(
+            f"Error sending insufficient balance notification: {str(e)}",
+            exc_info=True,
+        )
+        return {"status": "error", "reason": str(e)}
+
+
+@shared_task
+def send_payment_error_notification(user_id: str, error_message: str, context: dict = None):
+    """Send notifications when payment error occurs."""
+    try:
+        from apps.user.models import User
+        
+        user = User.objects.get(id=user_id)
+        NotificationService.notify_payment_error(
+            user=user,
+            error_message=error_message,
+            context=context,
+        )
+        return {"status": "success"}
+    
+    except User.DoesNotExist:
+        logger.error(f"User {user_id} not found for notification")
+        return {"status": "error", "reason": "not_found"}
+    
+    except Exception as e:
+        logger.error(
+            f"Error sending payment error notification: {str(e)}",
+            exc_info=True,
+        )
+        return {"status": "error", "reason": str(e)}
