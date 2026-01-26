@@ -1,7 +1,6 @@
 networks:
   inhome:
     name: inhome
-    external: true
     driver: bridge
 
 x-common:
