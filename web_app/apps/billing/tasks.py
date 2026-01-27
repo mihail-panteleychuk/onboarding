@@ -12,6 +12,7 @@ from apps.billing.constants import ServiceStatus
 from apps.billing.models import BalanceTransaction, ServiceRequest
 from apps.billing.notification_service import NotificationService
 from apps.billing.services import BillingService
+from apps.user.models import User
 
 logger = logging.getLogger(__name__)
 
@@ -201,8 +202,6 @@ def send_service_request_status_changed_notification(
 def send_balance_topup_notification(user_id: str, transaction_id: str):
     """Send notifications when balance is topped up."""
     try:
-        from apps.user.models import User
-        
         user = User.objects.get(id=user_id)
         transaction = BalanceTransaction.objects.get(id=transaction_id)
         NotificationService.notify_balance_topup(
@@ -234,11 +233,7 @@ def send_insufficient_balance_notification(
     """Send notifications when user has insufficient balance."""
     try:
         from decimal import Decimal
-        
-        from apps.user.models import User
-        
         from apps.billing.models import ServiceType
-        
         user = User.objects.get(id=user_id)
         service_type = ServiceType.objects.get(id=service_type_id)
         NotificationService.notify_insufficient_balance(
@@ -265,8 +260,6 @@ def send_insufficient_balance_notification(
 def send_payment_error_notification(user_id: str, error_message: str, context: dict = None):
     """Send notifications when payment error occurs."""
     try:
-        from apps.user.models import User
-        
         user = User.objects.get(id=user_id)
         NotificationService.notify_payment_error(
             user=user,

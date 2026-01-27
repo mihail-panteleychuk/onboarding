@@ -431,9 +431,14 @@ SERVICE_REQUEST_EXPORT_DOCS = {
         "- User: exports only their own requests (with all applied filters)\n"
         "- Admin: exports all matching requests\n\n"
         "**Filters & search:**\n"
-        "Same query parameters as for the list endpoint `/api/billing/requests/` "
-        "(search, status, user, service_type, created_after, created_before, "
-        "reserved_amount/reserved_amount_min/reserved_amount_max, ordering).\n\n"
+        "Same query parameters as for the list endpoint `/api/billing/requests/`.\n"
+        "- `search`: full-text search in user email, first_name, last_name, service type name (case-insensitive, by substring)\n"
+        "- `status`: filter by status (pending, confirmed, in_progress, completed, cancelled)\n"
+        "- `user`: filter by user ID (UUID)\n"
+        "- `service_type`: filter by service type ID (UUID)\n"
+        "- `created_after` / `created_before`: filter by creation date range (YYYY-MM-DD)\n"
+        "- `reserved_amount`, `reserved_amount_min`, `reserved_amount_max`: filters by reserved amount\n"
+        "- `ordering`: sort by field (prefix '-' for descending; same fields as in list endpoint)\n\n"
         "**Field selection:**\n"
         "- Use `fields` query parameter to control exported columns, e.g. "
         "`?fields=id,user_email,service_type_name,status,reserved_amount,created`.\n"
@@ -443,6 +448,86 @@ SERVICE_REQUEST_EXPORT_DOCS = {
         "- Disposition: attachment with filename `service_requests.csv`."
     ),
     "manual_parameters": [
+        openapi.Parameter(
+            "search",
+            openapi.IN_QUERY,
+            description="Full-text search in user email, first_name, last_name, service type name (case-insensitive, by substring).",
+            type=openapi.TYPE_STRING,
+            required=False,
+        ),
+        openapi.Parameter(
+            "status",
+            openapi.IN_QUERY,
+            description="Filter by status: pending, confirmed, in_progress, completed, cancelled.",
+            type=openapi.TYPE_STRING,
+            required=False,
+            enum=["pending", "confirmed", "in_progress", "completed", "cancelled"],
+        ),
+        openapi.Parameter(
+            "user",
+            openapi.IN_QUERY,
+            description="Filter by user ID (UUID). Only admins can see other users' requests; regular users will still see only their own.",
+            type=openapi.TYPE_STRING,
+            format=openapi.FORMAT_UUID,
+            required=False,
+        ),
+        openapi.Parameter(
+            "service_type",
+            openapi.IN_QUERY,
+            description="Filter by service type ID (UUID).",
+            type=openapi.TYPE_STRING,
+            format=openapi.FORMAT_UUID,
+            required=False,
+        ),
+        openapi.Parameter(
+            "created_after",
+            openapi.IN_QUERY,
+            description="Export requests created after this date (YYYY-MM-DD).",
+            type=openapi.TYPE_STRING,
+            format=openapi.FORMAT_DATE,
+            required=False,
+        ),
+        openapi.Parameter(
+            "created_before",
+            openapi.IN_QUERY,
+            description="Export requests created before this date (YYYY-MM-DD).",
+            type=openapi.TYPE_STRING,
+            format=openapi.FORMAT_DATE,
+            required=False,
+        ),
+        openapi.Parameter(
+            "reserved_amount",
+            openapi.IN_QUERY,
+            description="Export only requests with this exact reserved amount (decimal).",
+            type=openapi.TYPE_NUMBER,
+            required=False,
+        ),
+        openapi.Parameter(
+            "reserved_amount_min",
+            openapi.IN_QUERY,
+            description="Export requests with reserved amount greater than or equal to this value (decimal).",
+            type=openapi.TYPE_NUMBER,
+            required=False,
+        ),
+        openapi.Parameter(
+            "reserved_amount_max",
+            openapi.IN_QUERY,
+            description="Export requests with reserved amount less than or equal to this value (decimal).",
+            type=openapi.TYPE_NUMBER,
+            required=False,
+        ),
+        openapi.Parameter(
+            "ordering",
+            openapi.IN_QUERY,
+            description=(
+                "Sort by field. Prefix with '-' for descending order. "
+                "Available fields: id, status, reserved_amount, created, updated, "
+                "user__email, user__first_name, user__last_name, service_type__name, service_type__price_usd. "
+                "Default: -created."
+            ),
+            type=openapi.TYPE_STRING,
+            required=False,
+        ),
         openapi.Parameter(
             "fields",
             openapi.IN_QUERY,

@@ -132,52 +132,45 @@ class BalanceView(BillingBaseView):
         """Get balance and transactions based on user role and user_id parameter."""
         current_user = request.user
         user_id_param = request.query_params.get("user_id")
-        
+
         # If user_id is not passed
         if not user_id_param:
             # The admin receives a list of all users with balances (with pagination)
             if current_user.role == User.UserRoleChoices.ADMIN:
-                users = self.get_active_users_queryset()                
-                
+                users = self.get_active_users_queryset()
+
                 paginator = self.pagination_class()
                 paginated_users = paginator.paginate_queryset(users, request)
-                
-                user_balances = []
-                
-                for user in paginated_users:
-                    balance = BillingService.get_user_balance(user)
-                    user_balances.append({
-                        "user_id": user.id,
-                        "user_email": user.email,
-                        "user_first_name": user.first_name,
-                        "user_last_name": user.last_name,
-                        "balance": balance,
-                    })                
-                
-                return paginator.get_paginated_response(user_balances)            
-            
-            else:
-                balance = BillingService.get_user_balance(current_user)
-                transactions = BalanceTransaction.objects.for_user(current_user)[:20]
-                
-                serializer = BalanceResponseSerializer({
+
+                user_balances = BillingService.build_user_balance_list(paginated_users)
+
+                return paginator.get_paginated_response(user_balances)
+
+            balance = BillingService.get_user_balance(current_user)
+            transactions = BalanceTransaction.objects.for_user(current_user)[:20]
+
+            serializer = BalanceResponseSerializer(
+                {
                     "balance": balance,
                     "transactions": transactions,
-                })
-                return Response(serializer.data)
-        
+                }
+            )
+            return Response(serializer.data)
+
         # If user_id is passed (permission already checked access)
         target_user = self.get_target_user(request)
-        
+
         # Admin can see the balance of any user, user can see only their own
         # (permission already verified that user can access this user_id)
         balance = BillingService.get_user_balance(target_user)
         transactions = BalanceTransaction.objects.for_user(target_user)[:20]
-        
-        serializer = BalanceResponseSerializer({
-            "balance": balance,
-            "transactions": transactions,
-        })
+
+        serializer = BalanceResponseSerializer(
+            {
+                "balance": balance,
+                "transactions": transactions,
+            }
+        )
         return Response(serializer.data)
 
 
@@ -220,81 +213,20 @@ class BalanceTransactionsExportView(BillingBaseView):
         """Export transactions to CSV."""
         # Get target user (permission already checked access if user_id provided)
         target_user = self.get_target_user(request)
-        
-        # Get transactions
-        transactions = BalanceTransaction.objects.for_user(target_user).select_related("user", "service_request")
-        
-        # Apply ordering with validation
-        ordering_param = request.query_params.get("ordering", "-created")
-        if ordering_param:
-            ordering_param = ordering_param.strip()
-            
-            # Allowed fields for ordering
-            allowed_ordering_fields = {
-                "id",
-                "user_id",
-                "amount",
-                "direction",
-                "kind",
-                "service_request_id",
-                "external_id",
-                "created",
-                "updated",
-            }
-            
-            # Separate possible "-" prefix and field name
-            is_desc = ordering_param.startswith("-")
-            field_name = ordering_param[1:] if is_desc else ordering_param
-            
-            # Validate field name
-            if not field_name or field_name not in allowed_ordering_fields:
-                return Response(
-                    {
-                        "detail": (
-                            f"Invalid ordering field: '{ordering_param}'. "
-                            f"Allowed fields: {', '.join(sorted(allowed_ordering_fields))}."
-                        )
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            
-            ordering = f"-{field_name}" if is_desc else field_name
-            transactions = transactions.order_by(ordering)
-        
-        # Available fields mapping
-        available_fields = {
-            "id": lambda t: str(t.id),
-            "user_id": lambda t: str(t.user.id),
-            "user_email": lambda t: t.user.email,
-            "direction": lambda t: t.direction,
-            "kind": lambda t: t.kind,
-            "amount": lambda t: str(t.amount),
-            "service_request_id": lambda t: str(t.service_request.id) if t.service_request else "",
-            "external_id": lambda t: t.external_id or "",
-            "created": lambda t: t.created.strftime("%Y-%m-%d %H:%M:%S") if t.created else "",
-            "updated": lambda t: t.updated.strftime("%Y-%m-%d %H:%M:%S") if t.updated else "",
-        }
-        
-        # Get fields to export
-        fields_param = request.query_params.get("fields", "")
-        
-        if fields_param:
-            requested_fields = [f.strip() for f in fields_param.split(",")]
-            # Validate fields
-            valid_fields = [f for f in requested_fields if f in available_fields]
-            
-            if not valid_fields:
-                return Response(
-                    {"detail": "No valid fields specified."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            
-            export_fields = valid_fields
-        
-        else:
-            # Default fields
-            export_fields = ["id", "user_email", "direction", "kind", "amount", "service_request_id", "created"]
-        
+
+        # Prepare queryset, fields and mapping using service layer
+        ordering_param = request.query_params.get("ordering")
+        fields_param = request.query_params.get("fields")
+
+        try:
+            transactions, export_fields, available_fields = BillingService.prepare_transactions_export(
+                target_user=target_user,
+                ordering_param=ordering_param,
+                fields_param=fields_param,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
         # Create CSV response
         response = HttpResponse(content_type="text/csv; charset=utf-8")
         filename = f"balance_transactions_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv"
@@ -463,57 +395,19 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
         Uses the same filtering, search and ordering as the list endpoint.
         """
 
-        # 1. Determine allowed fields and requested fields
-        allowed_fields = {
-            "id",
-            "user_id",
-            "user_email",
-            "user_first_name",
-            "user_last_name",
-            "service_type_id",
-            "service_type_name",
-            "service_type_price_usd",
-            "status",
-            "reserved_amount",
-            "created",
-            "updated",
-        }
-
-        default_fields: List[str] = [
-            "id",
-            "user_email",
-            "service_type_name",
-            "service_type_price_usd",
-            "status",
-            "reserved_amount",
-            "created",
-        ]
-
         fields_param = request.query_params.get("fields")
-        
-        if fields_param:
-            requested_fields = [f.strip() for f in fields_param.split(",") if f.strip()]
-        
-        else:
-            requested_fields = default_fields
 
-        invalid_fields = [f for f in requested_fields if f not in allowed_fields]
-        
-        if invalid_fields:
-            return Response(
-                {
-                    "detail": (
-                        "Invalid fields: "
-                        + ", ".join(invalid_fields)
-                        + ". Allowed fields: "
-                        + ", ".join(sorted(allowed_fields))
-                    )
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # 2. Apply filters/search/ordering (without pagination)
+        # 1. Apply filters/search/ordering (without pagination)
         queryset = self.filter_queryset(self.get_queryset())
+
+        # 2. Prepare fields and rows using service layer
+        try:
+            requested_fields, rows = BillingService.prepare_service_requests_export(
+                queryset=queryset.iterator(chunk_size=500),
+                fields_param=fields_param,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         # 3. Prepare HTTP response as CSV
         response = HttpResponse(content_type="text/csv")
@@ -522,29 +416,9 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
         writer = csv.writer(response)
         writer.writerow(requested_fields)
 
-        # 4. Helper to map object to row
-        def row_for(obj: ServiceRequest) -> Iterable:
-            service_type = obj.service_type
-            mapping = {
-                "id": str(obj.id),
-                "user_id": str(obj.user_id),
-                "user_email": getattr(obj.user, "email", None),
-                "user_first_name": getattr(obj.user, "first_name", None),
-                "user_last_name": getattr(obj.user, "last_name", None),
-                "service_type_id": str(service_type.id) if service_type else None,
-                "service_type_name": service_type.name if service_type else None,
-                "service_type_price_usd": (
-                    str(service_type.price_usd) if service_type else None
-                ),
-                "status": obj.status,
-                "reserved_amount": str(obj.reserved_amount),
-                "created": obj.created.strftime("%Y-%m-%d %H:%M:%S") if obj.created else "",
-                "updated": obj.updated.strftime("%Y-%m-%d %H:%M:%S") if obj.updated else "",
-            }
-            return [mapping.get(field) for field in requested_fields]
-
-        for obj in queryset.iterator(chunk_size=500):
-            writer.writerow(row_for(obj))
+        # 4. Write data rows
+        for row in rows:
+            writer.writerow(row)
 
         return response
 

@@ -1,7 +1,7 @@
 """Business logic services for billing operations."""
 
 from decimal import Decimal
-from typing import Optional
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from django.conf import settings
 from django.db import transaction as db_transaction
@@ -9,15 +9,195 @@ from rest_framework.exceptions import ValidationError
 
 from apps.billing.constants import ServiceStatus, TransactionDirection, TransactionKind
 from apps.billing.models import BalanceTransaction, ServiceRequest, ServiceType
+from apps.user.models import User
 
 
 class BillingService:
     """Service for billing operations: balance, service requests, transactions."""
 
     @staticmethod
-    def get_user_balance(user) -> Decimal:
+    def get_user_balance(user: User) -> Decimal:
         """Get current balance for a user."""
         return BalanceTransaction.objects.calculate_user_balance(user)
+
+
+    @staticmethod
+    def build_user_balance_list(users: Iterable[User]) -> List[dict]:
+        """Build list of user balances for admin views.
+
+        Returns a list of dictionaries compatible with existing
+        `UserBalanceSerializer` / `UserBalanceListSerializer` structure.
+        """
+        user_balances: List[dict] = []
+
+        for user in users:
+            balance = BillingService.get_user_balance(user)
+            user_balances.append(
+                {
+                    "user_id": user.id,
+                    "user_email": user.email,
+                    "user_first_name": user.first_name,
+                    "user_last_name": user.last_name,
+                    "balance": balance,
+                }
+            )
+
+        return user_balances
+
+
+    @staticmethod
+    def prepare_transactions_export(
+        target_user: User,
+        ordering_param: Optional[str],
+        fields_param: Optional[str],
+    ) -> Tuple[Iterable[BalanceTransaction], List[str], Dict[str, Callable[[BalanceTransaction], str]]]:
+        """Prepare queryset, fields and field mapping for transactions CSV export.
+        """
+        # Base queryset
+        transactions = BalanceTransaction.objects.for_user(target_user).select_related(
+            "user", "service_request"
+        )
+
+        # Apply ordering with validation
+        ordering_value = ordering_param.strip() if ordering_param else "-created"
+
+        if ordering_value:
+            allowed_ordering_fields = {
+                "id",
+                "user_id",
+                "amount",
+                "direction",
+                "kind",
+                "service_request_id",
+                "external_id",
+                "created",
+                "updated",
+            }
+
+            is_desc = ordering_value.startswith("-")
+            field_name = ordering_value[1:] if is_desc else ordering_value
+
+            if not field_name or field_name not in allowed_ordering_fields:
+                allowed_str = ", ".join(sorted(allowed_ordering_fields))
+                raise ValueError(
+                    f"Invalid ordering field: '{ordering_value}'. Allowed fields: {allowed_str}."
+                )
+
+            ordering = f"-{field_name}" if is_desc else field_name
+            transactions = transactions.order_by(ordering)
+
+        # Available fields mapping
+        available_fields: Dict[str, Callable[[BalanceTransaction], str]] = {
+            "id": lambda t: str(t.id),
+            "user_id": lambda t: str(t.user.id),
+            "user_email": lambda t: t.user.email,
+            "direction": lambda t: t.direction,
+            "kind": lambda t: t.kind,
+            "amount": lambda t: str(t.amount),
+            "service_request_id": lambda t: str(t.service_request.id) if t.service_request else "",
+            "external_id": lambda t: t.external_id or "",
+            "created": lambda t: t.created.strftime("%Y-%m-%d %H:%M:%S") if t.created else "",
+            "updated": lambda t: t.updated.strftime("%Y-%m-%d %H:%M:%S") if t.updated else "",
+        }
+
+        # Determine fields to export
+        fields_value = (fields_param or "").strip()
+
+        if fields_value:
+            requested_fields = [f.strip() for f in fields_value.split(",") if f.strip()]
+            valid_fields = [f for f in requested_fields if f in available_fields]
+
+            if not valid_fields:
+                raise ValueError("No valid fields specified.")
+
+            export_fields = valid_fields
+        
+        else:
+            export_fields = [
+                "id",
+                "user_email",
+                "direction",
+                "kind",
+                "amount",
+                "service_request_id",
+                "created",
+            ]
+
+        return transactions, export_fields, available_fields
+
+    
+    @staticmethod
+    def prepare_service_requests_export(
+        queryset: Iterable[ServiceRequest],
+        fields_param: Optional[str],
+    ) -> Tuple[List[str], Iterable[List[str]]]:
+        """Prepare data for service requests CSV export.        
+        """
+        allowed_fields = {
+            "id",
+            "user_id",
+            "user_email",
+            "user_first_name",
+            "user_last_name",
+            "service_type_id",
+            "service_type_name",
+            "service_type_price_usd",
+            "status",
+            "reserved_amount",
+            "created",
+            "updated",
+        }
+
+        default_fields: List[str] = [
+            "id",
+            "user_email",
+            "service_type_name",
+            "service_type_price_usd",
+            "status",
+            "reserved_amount",
+            "created",
+        ]
+
+        if fields_param:
+            requested_fields = [f.strip() for f in fields_param.split(",") if f.strip()]
+        
+        else:
+            requested_fields = default_fields
+
+        invalid_fields = [f for f in requested_fields if f not in allowed_fields]
+
+        if invalid_fields:
+            allowed_str = ", ".join(sorted(allowed_fields))
+            invalid_str = ", ".join(invalid_fields)
+            raise ValueError(
+                "Invalid fields: "
+                + invalid_str
+                + ". Allowed fields: "
+                + allowed_str
+            )
+
+        def iter_rows() -> Iterable[List[str]]:
+            for obj in queryset:
+                service_type = obj.service_type
+                mapping = {
+                    "id": str(obj.id),
+                    "user_id": str(obj.user_id),
+                    "user_email": getattr(obj.user, "email", None),
+                    "user_first_name": getattr(obj.user, "first_name", None),
+                    "user_last_name": getattr(obj.user, "last_name", None),
+                    "service_type_id": str(service_type.id) if service_type else None,
+                    "service_type_name": service_type.name if service_type else None,
+                    "service_type_price_usd": (
+                        str(service_type.price_usd) if service_type else None
+                    ),
+                    "status": obj.status,
+                    "reserved_amount": str(obj.reserved_amount),
+                    "created": obj.created.strftime("%Y-%m-%d %H:%M:%S") if obj.created else "",
+                    "updated": obj.updated.strftime("%Y-%m-%d %H:%M:%S") if obj.updated else "",
+                }
+                yield [mapping.get(field) for field in requested_fields]
+
+        return requested_fields, iter_rows()
 
 
     @staticmethod
@@ -125,18 +305,16 @@ class BillingService:
         user,
         service_request: ServiceRequest,
     ) -> Optional[BalanceTransaction]:
-        """Cancel a service request (handles both user and admin cases).        
+        """Cancel a service request (handles both user and admin cases).
         - User can only cancel pending requests.
         - Admin can cancel any request.
         """
-        from apps.user.models import User
-        
         # Admin can cancel any request using status change
         if user.role == User.UserRoleChoices.ADMIN:
             BillingService.change_service_request_status(
                 service_request=service_request,
                 new_status=ServiceStatus.CANCELLED.value,
-            )            
+            )
             return None
         
         # User can only cancel pending requests
