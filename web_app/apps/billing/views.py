@@ -33,6 +33,7 @@ from apps.billing.serializers import (
 )
 from apps.billing.services import BillingService
 from apps.billing.stripe_service import StripeService
+from apps.billing.tasks import send_payment_error_notification
 from apps.billing.permissions import (
     CanAccessUserData,
     CanCancelServiceRequest,
@@ -61,12 +62,30 @@ class CustomSearchFilter(filters.SearchFilter):
     search_param = "search"
 
 
-class BalanceListPagination(PageNumberPagination):
-    """Pagination for balance list (admin only)."""
+class StandardPagination(PageNumberPagination):
+    """Standard pagination for billing endpoints."""
     
     page_size = 20
     page_size_query_param = "page_size"
     max_page_size = 100
+
+
+class BillingBaseView(APIView):
+    """Base view with common helper methods for billing operations."""
+    
+    def get_target_user(self, request):
+        """Get target user based on user_id query parameter."""
+        user_id_param = request.query_params.get("user_id")
+        
+        if user_id_param:
+            return get_object_or_404(User, id=user_id_param)
+        
+        return request.user
+    
+    
+    def get_active_users_queryset(self):
+        """Get queryset of active users for admin operations."""
+        return User.objects.filter(is_active=True, is_deleted=False).order_by("email")
 
 
 class ServiceTypeViewSet(viewsets.ReadOnlyModelViewSet):
@@ -92,7 +111,7 @@ class ServiceTypeViewSet(viewsets.ReadOnlyModelViewSet):
         )
 
 
-class BalanceView(APIView):
+class BalanceView(BillingBaseView):
     """View for getting user balance and transaction history.
     
     Access rules:
@@ -105,6 +124,7 @@ class BalanceView(APIView):
     """
 
     permission_classes = [permissions.IsAuthenticated, CanAccessUserData]
+    pagination_class = StandardPagination
 
     
     @swagger_auto_schema(**BALANCE_GET_DOCS)
@@ -117,9 +137,9 @@ class BalanceView(APIView):
         if not user_id_param:
             # The admin receives a list of all users with balances (with pagination)
             if current_user.role == User.UserRoleChoices.ADMIN:
-                users = User.objects.filter(is_active=True, is_deleted=False).order_by("email")                
+                users = self.get_active_users_queryset()                
                 
-                paginator = BalanceListPagination()
+                paginator = self.pagination_class()
                 paginated_users = paginator.paginate_queryset(users, request)
                 
                 user_balances = []
@@ -147,7 +167,7 @@ class BalanceView(APIView):
                 return Response(serializer.data)
         
         # If user_id is passed (permission already checked access)
-        target_user = get_object_or_404(User, id=user_id_param)
+        target_user = self.get_target_user(request)
         
         # Admin can see the balance of any user, user can see only their own
         # (permission already verified that user can access this user_id)
@@ -161,7 +181,7 @@ class BalanceView(APIView):
         return Response(serializer.data)
 
 
-class BalanceTransactionsView(APIView):
+class BalanceTransactionsView(BillingBaseView):
     """View for getting user transactions (admin only).
     
     Allows admins to view transactions for any user.
@@ -169,31 +189,26 @@ class BalanceTransactionsView(APIView):
     """
 
     permission_classes = [permissions.IsAuthenticated, CanAccessUserData]
+    pagination_class = StandardPagination
 
     @swagger_auto_schema(**BALANCE_TRANSACTIONS_GET_DOCS)
     def get(self, request):
         """Get transactions for a user."""
-        user_id_param = request.query_params.get("user_id")
-        
-        # Define target user (permission already checked access if user_id provided)
-        if user_id_param:
-            target_user = get_object_or_404(User, id=user_id_param)
-        
-        else:
-            target_user = request.user
+        # Get target user (permission already checked access if user_id provided)
+        target_user = self.get_target_user(request)
         
         # Get transactions
         transactions = BalanceTransaction.objects.for_user(target_user).order_by("-created")
         
         # Use pagination
-        paginator = BalanceListPagination()
+        paginator = self.pagination_class()
         paginated_transactions = paginator.paginate_queryset(transactions, request)
         
         serializer = BalanceTransactionSerializer(paginated_transactions, many=True)
         return paginator.get_paginated_response(serializer.data)
 
 
-class BalanceTransactionsExportView(APIView):
+class BalanceTransactionsExportView(BillingBaseView):
     """View for exporting transactions to CSV.    
     Separate view for export endpoint to avoid conflicts with GET method.
     """
@@ -203,21 +218,47 @@ class BalanceTransactionsExportView(APIView):
     @swagger_auto_schema(**BALANCE_TRANSACTIONS_EXPORT_GET_DOCS)
     def get(self, request):
         """Export transactions to CSV."""
-        user_id_param = request.query_params.get("user_id")
-        
-        # Define target user (permission already checked access if user_id provided)
-        if user_id_param:
-            target_user = get_object_or_404(User, id=user_id_param)
-        
-        else:
-            target_user = request.user
+        # Get target user (permission already checked access if user_id provided)
+        target_user = self.get_target_user(request)
         
         # Get transactions
         transactions = BalanceTransaction.objects.for_user(target_user).select_related("user", "service_request")
         
-        # Apply ordering
-        ordering = request.query_params.get("ordering", "-created")
-        if ordering:
+        # Apply ordering with validation
+        ordering_param = request.query_params.get("ordering", "-created")
+        if ordering_param:
+            ordering_param = ordering_param.strip()
+            
+            # Allowed fields for ordering
+            allowed_ordering_fields = {
+                "id",
+                "user_id",
+                "amount",
+                "direction",
+                "kind",
+                "service_request_id",
+                "external_id",
+                "created",
+                "updated",
+            }
+            
+            # Separate possible "-" prefix and field name
+            is_desc = ordering_param.startswith("-")
+            field_name = ordering_param[1:] if is_desc else ordering_param
+            
+            # Validate field name
+            if not field_name or field_name not in allowed_ordering_fields:
+                return Response(
+                    {
+                        "detail": (
+                            f"Invalid ordering field: '{ordering_param}'. "
+                            f"Allowed fields: {', '.join(sorted(allowed_ordering_fields))}."
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            
+            ordering = f"-{field_name}" if is_desc else field_name
             transactions = transactions.order_by(ordering)
         
         # Available fields mapping
@@ -304,8 +345,6 @@ class BalanceTopUpView(APIView):
         
         except Exception as e:
             # Send notification about payment error
-            from apps.billing.tasks import send_payment_error_notification
-            
             send_payment_error_notification.delay(
                 user_id=str(request.user.id),
                 error_message=str(e),
@@ -334,6 +373,7 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
 
     serializer_class = ServiceRequestSerializer
     permission_classes = [permissions.IsAuthenticated, CanViewServiceRequest]
+    pagination_class = StandardPagination
     http_method_names = ["get", "post"]  # Disable PUT, PATCH, DELETE
     filterset_class = ServiceRequestFilter
     

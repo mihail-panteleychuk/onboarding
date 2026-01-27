@@ -217,7 +217,13 @@ BALANCE_TRANSACTIONS_EXPORT_GET_DOCS = {
         openapi.Parameter(
             "ordering",
             openapi.IN_QUERY,
-            description="Sort by field. Prefix with '-' for descending. Default: -created",
+            description=(
+                "Sort by field. Prefix with '-' for descending. "
+                "Allowed fields: id, user_id, amount, direction, kind, "
+                "service_request_id, external_id, created, updated. "
+                "Examples: 'created', '-created', 'amount', '-amount'. "
+                "Default: -created."
+            ),
             type=openapi.TYPE_STRING,
             required=False,
         ),

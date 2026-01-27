@@ -203,13 +203,16 @@ class BillingService:
         service_request.status = new_status_enum
         service_request.save(update_fields=["status"])
         
-        # Send notification about status change after commit
+        # Send notification about status change after commit.
+        # NB: service_request.status is stored as a string (choice field),
+        # so we pass the raw value here. The Celery task converts it back
+        # to ServiceStatus enum internally.
         from apps.billing.tasks import send_service_request_status_changed_notification
         
         db_transaction.on_commit(
             lambda: send_service_request_status_changed_notification.delay(
                 service_request_id=str(service_request.id),
-                old_status=old_status.value,
+                old_status=old_status,
                 new_status=new_status_enum.value,
             )
         )
