@@ -13,6 +13,7 @@ from apps.billing.views import (
 )
 
 router = routers.DefaultRouter()
+router.include_root_view = False  
 router.register("service-types", ServiceTypeViewSet, basename="service-type")
 router.register("requests", ServiceRequestViewSet, basename="service-request")
 

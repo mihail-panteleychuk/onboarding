@@ -29,7 +29,7 @@ from apps.subscription.models import Plan, Subscription
 from apps.user.models import Country
 from apps.user.serializers import FullUserInfoSerializer
 from apps.billing.services import BillingService
-from apps.billing.stripe_service import retrieve_checkout_session
+from apps.billing.stripe_service import StripeService
 
 User = get_user_model()
 
