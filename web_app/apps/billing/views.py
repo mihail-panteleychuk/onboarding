@@ -33,6 +33,11 @@ from apps.billing.serializers import (
 )
 from apps.billing.services import BillingService
 from apps.billing.stripe_service import StripeService
+from apps.billing.permissions import (
+    CanAccessUserData,
+    CanCancelServiceRequest,
+    CanViewServiceRequest,
+)
 from apps.billing.swagger_docs import (
     BALANCE_GET_DOCS,
     BALANCE_TOPUP_POST_DOCS,
@@ -99,7 +104,7 @@ class BalanceView(APIView):
       * User: returns own balance if user_id matches, otherwise 403 Forbidden
     """
 
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, CanAccessUserData]
 
     
     @swagger_auto_schema(**BALANCE_GET_DOCS)
@@ -107,13 +112,6 @@ class BalanceView(APIView):
         """Get balance and transactions based on user role and user_id parameter."""
         current_user = request.user
         user_id_param = request.query_params.get("user_id")
-        
-        # Authentication check
-        if not current_user.is_authenticated or not hasattr(current_user, 'role'):
-            return Response(
-                {"detail": "Authentication required."},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
         
         # If user_id is not passed
         if not user_id_param:
@@ -148,44 +146,19 @@ class BalanceView(APIView):
                 })
                 return Response(serializer.data)
         
-        # If user_id is passed
-        else:
-            try:
-                target_user = User.objects.get(id=user_id_param)
-            
-            except User.DoesNotExist:
-                return Response(
-                    {"detail": "User not found."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
-            
-            # The admin can see the balance of any user.
-            if hasattr(current_user, 'role') and current_user.role == User.UserRoleChoices.ADMIN:
-                balance = BillingService.get_user_balance(target_user)
-                transactions = BalanceTransaction.objects.for_user(target_user)[:20]
-                
-                serializer = BalanceResponseSerializer({
-                    "balance": balance,
-                    "transactions": transactions,
-                })
-                return Response(serializer.data)
-            
-            # The user can only see his own balance.
-            else:
-                if target_user.id != current_user.id:
-                    return Response(
-                        {"detail": "You do not have permission to view this user's balance."},
-                        status=status.HTTP_403_FORBIDDEN,
-                    )                
-                
-                balance = BillingService.get_user_balance(current_user)
-                transactions = BalanceTransaction.objects.for_user(current_user)[:20]
-                
-                serializer = BalanceResponseSerializer({
-                    "balance": balance,
-                    "transactions": transactions,
-                })
-                return Response(serializer.data)
+        # If user_id is passed (permission already checked access)
+        target_user = get_object_or_404(User, id=user_id_param)
+        
+        # Admin can see the balance of any user, user can see only their own
+        # (permission already verified that user can access this user_id)
+        balance = BillingService.get_user_balance(target_user)
+        transactions = BalanceTransaction.objects.for_user(target_user)[:20]
+        
+        serializer = BalanceResponseSerializer({
+            "balance": balance,
+            "transactions": transactions,
+        })
+        return Response(serializer.data)
 
 
 class BalanceTransactionsView(APIView):
@@ -195,50 +168,24 @@ class BalanceTransactionsView(APIView):
     Users can only view their own transactions.
     """
 
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, CanAccessUserData]
 
     @swagger_auto_schema(**BALANCE_TRANSACTIONS_GET_DOCS)
     def get(self, request):
         """Get transactions for a user."""
-        current_user = request.user
-        
-        # Authentication check
-        if not current_user.is_authenticated or not hasattr(current_user, 'role'):
-            return Response(
-                {"detail": "Authentication required."},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
-        
         user_id_param = request.query_params.get("user_id")
         
-        # Defining the target user
+        # Define target user (permission already checked access if user_id provided)
         if user_id_param:
-            try:
-                target_user = User.objects.get(id=user_id_param)
-            
-            except User.DoesNotExist:
-                return Response(
-                    {"detail": "User not found."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
-            
-            # Checking access rights
-            if not hasattr(current_user, 'role') or current_user.role != User.UserRoleChoices.ADMIN:
-                
-                # The user can only see their own transactions.
-                if target_user.id != current_user.id:
-                    return Response(
-                        {"detail": "You do not have permission to view this user's transactions."},
-                        status=status.HTTP_403_FORBIDDEN,
-                    )
-        else:
-            # if user_id is not specified, the current user is used.
-            target_user = current_user
+            target_user = get_object_or_404(User, id=user_id_param)
         
-        # Receiving transactions
+        else:
+            target_user = request.user
+        
+        # Get transactions
         transactions = BalanceTransaction.objects.for_user(target_user).order_by("-created")
         
-        # We use pagination
+        # Use pagination
         paginator = BalanceListPagination()
         paginated_transactions = paginator.paginate_queryset(transactions, request)
         
@@ -251,41 +198,19 @@ class BalanceTransactionsExportView(APIView):
     Separate view for export endpoint to avoid conflicts with GET method.
     """
 
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, CanAccessUserData]
 
     @swagger_auto_schema(**BALANCE_TRANSACTIONS_EXPORT_GET_DOCS)
     def get(self, request):
         """Export transactions to CSV."""
-        current_user = request.user
-        
-        # Authentication check
-        if not current_user.is_authenticated or not hasattr(current_user, 'role'):
-            return Response(
-                {"detail": "Authentication required."},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
-        
         user_id_param = request.query_params.get("user_id")
         
-        # Define target user
+        # Define target user (permission already checked access if user_id provided)
         if user_id_param:
-            try:
-                target_user = User.objects.get(id=user_id_param)
-            except User.DoesNotExist:
-                return Response(
-                    {"detail": "User not found."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
-            
-            # Check access rights
-            if not hasattr(current_user, 'role') or current_user.role != User.UserRoleChoices.ADMIN:
-                if target_user.id != current_user.id:
-                    return Response(
-                        {"detail": "You do not have permission to export this user's transactions."},
-                        status=status.HTTP_403_FORBIDDEN,
-                    )
+            target_user = get_object_or_404(User, id=user_id_param)
+        
         else:
-            target_user = current_user
+            target_user = request.user
         
         # Get transactions
         transactions = BalanceTransaction.objects.for_user(target_user).select_related("user", "service_request")
@@ -408,7 +333,7 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
     """
 
     serializer_class = ServiceRequestSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, CanViewServiceRequest]
     http_method_names = ["get", "post"]  # Disable PUT, PATCH, DELETE
     filterset_class = ServiceRequestFilter
     
@@ -612,7 +537,7 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
         )
 
     @swagger_auto_schema(**SERVICE_REQUEST_CANCEL_DOCS)
-    @action(detail=True, methods=["post"], url_path="cancel")
+    @action(detail=True, methods=["post"], url_path="cancel", permission_classes=[permissions.IsAuthenticated, CanCancelServiceRequest])
     def cancel_request(self, request, pk=None):
         """Cancel a service request."""
         service_request = self.get_object()
