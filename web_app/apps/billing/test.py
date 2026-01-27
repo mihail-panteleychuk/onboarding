@@ -943,7 +943,7 @@ class BalanceTopUpViewTest(BaseBillingAPITest):
         
         # Mock Stripe to avoid actual API calls in tests
         with unittest.mock.patch(
-            "apps.billing.views.create_checkout_session_for_topup"
+            "apps.billing.stripe_service.StripeService.create_checkout_session_for_topup"
         ) as mock_create:
             mock_create.return_value = {
                 "url": "https://checkout.stripe.com/test",
